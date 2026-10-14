@@ -2,7 +2,7 @@ import React from 'react';
 
 interface ARModelViewerProps {
     src: string;
-    poster: string;
+    poster?: string;
     alt: string;
     onView?: () => void;
 }
@@ -16,21 +16,18 @@ export const ARModelViewer: React.FC<ARModelViewerProps> = ({ src, poster, alt, 
     const ModelViewer = 'model-viewer' as any;
 
     return (
-        <div className="relative w-full h-full rounded-xl overflow-hidden bg-gray-50 border-4 border-yellow-400">
-            {/* DEBUG OVERLAY */}
-            <div className="absolute top-0 left-0 bg-yellow-400 text-black p-1 z-50 text-[10px] font-mono w-full text-center font-bold">
-                VIEWER V2 - SRC: {src || "EMPTY"}
-            </div>
-
+        <div className="relative w-full h-full rounded-xl overflow-hidden bg-slate-900/5 border border-slate-200">
             {loadError && (
-                <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/80 px-4 text-center">
-                    <p className="text-red-500 font-bold bg-white p-2 rounded">{loadError}</p>
+                <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm px-4 text-center">
+                    <span className="material-icons-round text-amber-400 text-3xl mb-2">view_in_ar</span>
+                    <p className="text-white text-sm font-medium">{loadError}</p>
+                    <p className="text-white/60 text-xs mt-1">Check 3D model URL or connection</p>
                 </div>
             )}
 
             <ModelViewer
                 src={src}
-                // REMOVED POSTER
+                poster={poster}
                 alt={alt}
                 shadow-intensity="1"
                 camera-controls
@@ -40,24 +37,21 @@ export const ARModelViewer: React.FC<ARModelViewerProps> = ({ src, poster, alt, 
                 crossorigin="anonymous"
                 ar-modes="webxr scene-viewer quick-look"
                 onError={(e: any) => {
-                    console.error("ARModelViewer error:", e);
-                    setLoadError("Model Failed: Check Console");
-                    alert("Model Failed to Load (Viewer V2)");
+                    console.warn("ARModelViewer load notice:", e);
+                    setLoadError("3D Preview unavailable");
                 }}
                 on-ar-status={(e: any) => {
-                    if (e.detail.status === 'session-started') handleARStart();
+                    if (e.detail?.status === 'session-started') handleARStart();
                 }}
                 class="w-full h-full"
             >
-                <button slot="ar-button" className="absolute bottom-4 right-4 bg-[#001f3f] text-white px-4 py-2 rounded-full font-bold text-sm shadow-lg flex items-center gap-2 z-50">
+                <button slot="ar-button" className="absolute bottom-4 right-4 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-full font-bold text-sm shadow-lg flex items-center gap-2 z-50 transition-colors">
                     <span className="material-icons-round text-lg">view_in_ar</span>
                     View in AR
                 </button>
-
-                {/* REMOVED POSTER SLOT */}
             </ModelViewer>
 
-            <div className="absolute top-4 left-4 bg-white/80 backdrop-blur px-3 py-1.5 rounded-lg text-xs font-medium text-gray-600 border border-white/50 mt-6">
+            <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 border border-slate-200/60 shadow-sm">
                 AR Scale: 1:1 Fixed
             </div>
         </div>

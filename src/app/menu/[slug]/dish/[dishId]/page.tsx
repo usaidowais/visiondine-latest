@@ -27,14 +27,9 @@ export default function SingleDishPage() {
                 if (rData) setRestaurant(rData);
 
                 // Fetch the specific dish
-                const { data: dData, error } = await supabase
-                    .from('dishes')
-                    .select('*')
-                    .eq('id', dishId)
-                    .single();
-
-                if (!error && dData) {
-                    setDish(dData as Dish);
+                const fetchedDish = await supabaseService.getDishById(dishId);
+                if (fetchedDish) {
+                    setDish(fetchedDish);
                 }
             } catch (error) {
                 console.error("Failed to load dish", error);

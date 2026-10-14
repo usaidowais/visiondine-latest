@@ -309,7 +309,7 @@ export default function LandingPage() {
                   to explore a live demo of our AR-powered restaurant menu.
                 </p>
                 <a
-                  href="https://ar-menu-nu.vercel.app/menu/khansaab"
+                  href="/menu/khansaab"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 mt-5 bg-teal-400 hover:bg-teal-500 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow-md"
