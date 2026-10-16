@@ -18,7 +18,25 @@ export default function ARDemoAdminPage() {
     const [category, setCategory] = useState('Specialty');
     const [imageUrl, setImageUrl] = useState('');
     const [glbUrl, setGlbUrl] = useState('');
+    // ── Scale / Dimension State ──────────────────────────────────
+    // We mirror the exact pattern used in /admin/restaurants/[id]/menu/[dishId]/page.tsx.
+    //
+    // arScale  = the TRUE stored value (currentScale × autoScaleFactor).
+    //            This is what gets persisted to Supabase and passed to ARExperience.
+    //
+    // currentScale     = the relative UI slider value (0.1 – 3.0).
+    //                    "1.0" means 'use the auto-normalised size'.
+    //
+    // autoScaleFactor  = computed once when the model loads via getDimensions().
+    //                    Formula: 0.2 / maxDim  (normalises largest axis to 20 cm).
+    //
+    // baseDim          = raw metre dimensions returned by getDimensions().
+    //                    Physical cm = baseDim.axis × currentScale × autoScaleFactor × 100.
     const [arScale, setArScale] = useState<number>(1.0);
+    const [currentScale, setCurrentScale] = useState<number>(1.0);
+    const [autoScaleFactor, setAutoScaleFactor] = useState<number>(1.0);
+    const [baseDim, setBaseDim] = useState({ x: 0, y: 0, z: 0 });
+    const [dimsReady, setDimsReady] = useState(false);
 
     // Model Upload State
     const [modelUploadProgress, setModelUploadProgress] = useState<number | null>(null);
@@ -47,6 +65,9 @@ export default function ARDemoAdminPage() {
     const modelViewerRef = useRef<any>(null);
     const modelFileInputRef = useRef<HTMLInputElement>(null);
     const imageFileInputRef = useRef<HTMLInputElement>(null);
+    // Ref to track the latest persisted true scale — avoids stale closures in
+    // the getDimensions load handler when glbUrl changes.
+    const loadedTrueScaleRef = useRef<number>(1.0);
 
     const publicDemoUrl = typeof window !== 'undefined'
         ? `${window.location.origin}/menu/khansaab/dish/wood-fired-pizza`
@@ -66,7 +87,9 @@ export default function ARDemoAdminPage() {
                     setCategory(demoDish.category || 'Specialty');
                     setImageUrl(demoDish.image_url || '/dish-pizza.svg');
                     setGlbUrl(demoDish.glb_url || '/assets/pizza-source.glb');
-                    setArScale(demoDish.ar_scale || 1.0);
+                    const trueScale = demoDish.ar_scale || 1.0;
+                    setArScale(trueScale);
+                    loadedTrueScaleRef.current = trueScale;
                 }
             } catch (err: any) {
                 console.error('Failed to load demo dish:', err);
@@ -83,17 +106,40 @@ export default function ARDemoAdminPage() {
         loadDemoData();
     }, []);
 
-    // Listen to <model-viewer> load/error events
+    // Listen to <model-viewer> load/error events + compute physical dimensions
     useEffect(() => {
         const viewer = modelViewerRef.current;
         if (!viewer) return;
 
         setModelViewerLoading(true);
         setModelViewerError(false);
+        setDimsReady(false);
 
         const handleLoad = () => {
             setModelViewerLoading(false);
             setModelViewerError(false);
+
+            // ── getDimensions() approach (same as menu editor) ──────
+            try {
+                const dims = (viewer as any).getDimensions();
+                if (dims && typeof dims.x === 'number') {
+                    setBaseDim({ x: dims.x, y: dims.y, z: dims.z });
+
+                    const maxDim = Math.max(dims.x, dims.y, dims.z);
+                    if (maxDim > 0) {
+                        const asFactor = 0.2 / maxDim; // normalise largest axis → ~20 cm
+                        setAutoScaleFactor(asFactor);
+
+                        // Use the ref — always current, never a stale closure.
+                        const loadedTrueScale = loadedTrueScaleRef.current;
+                        const uiScale = asFactor > 0 ? loadedTrueScale / asFactor : 1.0;
+                        setCurrentScale(Math.max(0.1, Math.min(3.0, uiScale)));
+                        setDimsReady(true);
+                    }
+                }
+            } catch (_) {
+                // getDimensions may not be available on all builds — silently ignore
+            }
         };
 
         const handleError = () => {
@@ -108,7 +154,8 @@ export default function ARDemoAdminPage() {
             viewer.removeEventListener('load', handleLoad);
             viewer.removeEventListener('error', handleError);
         };
-    }, [glbUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [glbUrl]); // re-run whenever model URL changes
 
     // Handle GLB Upload
     const handleModelFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,6 +285,11 @@ export default function ARDemoAdminPage() {
         }
 
         try {
+            // Compute true physical scale to persist (same formula as menu editor)
+            const trueScale = dimsReady
+                ? currentScale * autoScaleFactor
+                : (Number(arScale) || 1.0);
+
             const updates: Partial<Dish> = {
                 name: dishName.trim(),
                 description: description.trim(),
@@ -246,7 +298,7 @@ export default function ARDemoAdminPage() {
                 category: category.trim(),
                 image_url: imageUrl.trim() || '/dish-pizza.svg',
                 glb_url: glbUrl.trim() || '/assets/pizza-source.glb',
-                ar_scale: Number(arScale) || 1.0
+                ar_scale: trueScale
             };
 
             const result = await supabaseService.saveDemoDish(updates);
@@ -299,7 +351,14 @@ export default function ARDemoAdminPage() {
             setCategory(defaultDish.category);
             setImageUrl(defaultDish.image_url);
             setGlbUrl(defaultDish.glb_url || '/assets/pizza-source.glb');
-            setArScale(defaultDish.ar_scale || 1.0);
+            const defaultTrueScale = defaultDish.ar_scale || 1.0;
+            setArScale(defaultTrueScale);
+            loadedTrueScaleRef.current = defaultTrueScale;
+            // Clear dimension state — will be recomputed when model reloads
+            setDimsReady(false);
+            setBaseDim({ x: 0, y: 0, z: 0 });
+            setAutoScaleFactor(1.0);
+            setCurrentScale(1.0);
 
             setModelUploadSuccess(null);
             setModelUploadError(null);
@@ -746,19 +805,24 @@ export default function ARDemoAdminPage() {
                             </p>
                         </div>
 
-                        {/* AR Scale Factor Slider */}
-                        <div className="border-t border-border/40 pt-5 space-y-3">
-                            <div className="flex justify-between items-center">
+                        {/* AR Size / Dimension Slider ─────────────────────────────────
+                             Mirrors the "AR Live Dimension Scaling" tool in the menu editor.
+                             currentScale is the relative UI value (0.1–3.0).
+                             trueScale = currentScale × autoScaleFactor (persisted).
+                             cm = baseDim.axis × trueScale × 100.
+                        */}
+                        <div className="border-t border-border/40 pt-5 space-y-4">
+                            <div className="flex justify-between items-start">
                                 <div>
                                     <label className="text-xs font-bold text-foreground uppercase tracking-wider block">
-                                        AR Viewport Scale Factor
+                                        AR Display Size
                                     </label>
                                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                                        Fine-tune the size of the 3D dish in WebAR space.
+                                        Drag to resize. 1.0× = auto-normalised (~20 cm longest side).
                                     </p>
                                 </div>
-                                <span className="font-mono text-xs font-bold bg-primary/10 text-primary px-2.5 py-1 rounded-md border border-primary/20">
-                                    {arScale.toFixed(2)}x
+                                <span className="font-mono text-xs font-bold bg-primary/10 text-primary px-2.5 py-1 rounded-md border border-primary/20 shrink-0">
+                                    {currentScale.toFixed(2)}×
                                 </span>
                             </div>
 
@@ -767,15 +831,59 @@ export default function ARDemoAdminPage() {
                                 min="0.1"
                                 max="3.0"
                                 step="0.05"
-                                value={arScale}
-                                onChange={(e) => setArScale(parseFloat(e.target.value))}
+                                value={currentScale}
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    setCurrentScale(val);
+                                    // Update preview model-viewer scale live
+                                    if (modelViewerRef.current) {
+                                        const s = (val * autoScaleFactor).toFixed(6);
+                                        (modelViewerRef.current as any).setAttribute('scale', `${s} ${s} ${s}`);
+                                    }
+                                }}
                                 className="w-full accent-primary cursor-pointer"
                             />
 
                             <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
-                                <span>0.10x (Small)</span>
-                                <span>1.00x (Normal)</span>
-                                <span>3.00x (Large)</span>
+                                <span>0.10× (Tiny)</span>
+                                <span>1.00× (Normal)</span>
+                                <span>3.00× (XL)</span>
+                            </div>
+
+                            {/* Physical dimension readout */}
+                            <div className="bg-secondary/40 rounded-xl p-4 border border-border/50 space-y-0">
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                                    Estimated Real-World Dimensions
+                                    {!dimsReady && (
+                                        <span className="ml-2 font-normal normal-case text-amber-600">
+                                            (load the model in the preview to calculate)
+                                        </span>
+                                    )}
+                                </p>
+                                <div className="space-y-0 divide-y divide-border/40">
+                                    {([
+                                        { label: 'Width', icon: 'open_in_full', axis: 'x' as const },
+                                        { label: 'Height', icon: 'height', axis: 'y' as const },
+                                        { label: 'Depth', icon: 'settings_ethernet', axis: 'z' as const },
+                                    ] as { label: string; icon: string; axis: 'x' | 'y' | 'z' }[]).map(({ label, icon, axis }) => (
+                                        <div key={axis} className="flex justify-between items-center py-2.5">
+                                            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                                                <span className="material-icons-round text-xs">{icon}</span>
+                                                {label}
+                                            </span>
+                                            <span className="text-xs font-mono font-bold text-foreground">
+                                                {dimsReady
+                                                    ? `${(baseDim[axis] * currentScale * autoScaleFactor * 100).toFixed(1)} cm`
+                                                    : '— cm'
+                                                }
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/30">
+                                    <strong>Scale factor</strong> applied to model: <span className="font-mono">{(currentScale * autoScaleFactor).toFixed(4)}</span>
+                                    {' '}&nbsp;·&nbsp; Stored as <code className="bg-secondary px-1 rounded">ar_scale</code> in Supabase.
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -833,6 +941,10 @@ export default function ARDemoAdminPage() {
                                 shadow-intensity="1"
                                 exposure="1"
                                 bounds="tight"
+                                scale={dimsReady
+                                    ? `${(currentScale * autoScaleFactor).toFixed(6)} ${(currentScale * autoScaleFactor).toFixed(6)} ${(currentScale * autoScaleFactor).toFixed(6)}`
+                                    : undefined
+                                }
                                 style={{
                                     width: '100%',
                                     height: '100%',
