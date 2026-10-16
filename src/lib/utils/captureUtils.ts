@@ -286,9 +286,12 @@ export async function captureARRender(
       return;
     }
 
-    // Step 3: Download
+    // Step 3: Download or Share (Web Share API with Instagram Story / Photo support)
     const filename = `${sanitizeFilename(dishName)}_VisionDine_Capture.png`;
-    triggerDownload(watermarkedBlob, filename);
+    await triggerDownload(watermarkedBlob, filename, {
+      title: `${dishName} - ${restaurantName}`,
+      text: `See ${dishName} at ${restaurantName} on VisionDine AR!`,
+    });
   } catch (error) {
     console.error('[CaptureUtils] Capture failed:', error);
   }
@@ -395,7 +398,10 @@ export function startVideoRecording(
     const ext = mimeType.includes('webm') ? 'webm' : 'mp4';
     const blob = new Blob(chunks, { type: mimeType });
     const filename = `VisionDine_${sanitizeFilename(options.dishName)}_Video.${ext}`;
-    triggerDownload(blob, filename);
+    triggerDownload(blob, filename, {
+      title: `${options.dishName} - ${options.restaurantName}`,
+      text: `See ${options.dishName} at ${options.restaurantName} on VisionDine AR!`,
+    });
 
     // Cleanup
     recordCanvas.width = 0;
@@ -549,9 +555,37 @@ function loadImage(blob: Blob): Promise<HTMLImageElement> {
   });
 }
 
-// ─── Download Trigger ───────────────────────────────────────────
+// ─── Download & Share Trigger ────────────────────────────────────
 
-function triggerDownload(blob: Blob, filename: string): void {
+async function triggerDownload(
+  blob: Blob,
+  filename: string,
+  shareOptions?: { title?: string; text?: string }
+): Promise<void> {
+  // Mobile Web Share API integration (Vision Dine 2.0 pattern)
+  // Opens native mobile share sheet for Instagram Stories, Snapchat, WhatsApp, Photos, etc.
+  if (typeof navigator !== 'undefined' && typeof window !== 'undefined') {
+    try {
+      const mimeType = blob.type || (filename.endsWith('.mp4') ? 'video/mp4' : filename.endsWith('.webm') ? 'video/webm' : 'image/png');
+      const file = new File([blob], filename, { type: mimeType });
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: shareOptions?.title || filename,
+          text: shareOptions?.text || 'Check out this 3D dish on VisionDine AR!',
+        });
+        return;
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // User cancelled native share sheet
+        return;
+      }
+      console.warn('[CaptureUtils] Web Share failed, falling back to file download:', err);
+    }
+  }
+
   const url = URL.createObjectURL(blob);
 
   if (isIOSSafari()) {
