@@ -86,10 +86,22 @@ export function setBackgroundVideoElement(el: HTMLVideoElement | null): void {
  * Get or create a camera MediaStream (getUserMedia).
  * Shared by both ARExperience (visible <video>) and captureUtils (composite capture).
  * Returns the same stream instance to avoid duplicate hardware access.
+ * @param forceFresh If true, cleans up any existing stream and requests a fresh stream.
  */
-export async function getCameraStream(): Promise<MediaStream | null> {
-  if (_cameraStream && _cameraStream.active) {
-    return _cameraStream;
+export async function getCameraStream(forceFresh = false): Promise<MediaStream | null> {
+  if (!forceFresh && _cameraStream && _cameraStream.active) {
+    const hasLiveTracks = _cameraStream.getVideoTracks().some((t) => t.readyState === 'live');
+    if (hasLiveTracks) {
+      return _cameraStream;
+    }
+  }
+
+  // If forcing fresh or tracks are dead, clean up old stream tracks
+  if (_cameraStream) {
+    try {
+      _cameraStream.getTracks().forEach((t) => t.stop());
+    } catch {}
+    _cameraStream = null;
   }
 
   try {
@@ -101,10 +113,10 @@ export async function getCameraStream(): Promise<MediaStream | null> {
       },
       audio: false,
     });
-    console.log('[CaptureUtils] Camera stream acquired.');
+    console.log('[CaptureUtils] Fresh camera stream acquired.');
     return _cameraStream;
   } catch (err) {
-    console.warn('[CaptureUtils] Camera access denied:', err);
+    console.warn('[CaptureUtils] Camera access denied or failed:', err);
     return null;
   }
 }

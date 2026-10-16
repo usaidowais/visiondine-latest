@@ -51,8 +51,8 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
     console.log('[CaptureOverlay] Mounted for:', dishName);
     prewarmCamera();
     return () => {
-      // Cleanup on unmount
-      releaseCamera();
+      // NOTE: Do NOT call releaseCamera() here! ARExperience owns the camera lifecycle.
+      // Calling releaseCamera() here killed the camera stream whenever CaptureOverlay unmounted (e.g. during Reposition).
       if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (recordingHandleRef.current) recordingHandleRef.current.stop();

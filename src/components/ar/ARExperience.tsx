@@ -48,6 +48,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     const [hasError, setHasError] = useState(false);
     const [isInARSession, setIsInARSession] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
+    const [cameraInterrupted, setCameraInterrupted] = useState(false);
     const modelViewerRef = useRef<HTMLElement>(null);
     const backgroundVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -59,11 +60,10 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     const isAstronaut = modelUrl?.includes('Astronaut.glb');
     const isValidUrl = modelUrl && modelUrl.trim() !== '' && !isAstronaut;
 
-    // ── Background Camera Feed Setup ────────────────────────────
-    // Starts getUserMedia and pipes it into the visible <video> element
-    const startBackgroundCamera = useCallback(async () => {
+    // ── Background Camera Feed Setup & Lifecycle Recovery ───────
+    const startBackgroundCamera = useCallback(async (forceFresh = false) => {
         try {
-            const stream = await getCameraStream();
+            const stream = await getCameraStream(forceFresh);
             if (stream && backgroundVideoRef.current) {
                 backgroundVideoRef.current.srcObject = stream;
                 await backgroundVideoRef.current.play();
@@ -71,11 +71,16 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 // grabs frames from this exact element (no duplicate getUserMedia)
                 setBackgroundVideoElement(backgroundVideoRef.current);
                 setCameraReady(true);
-                console.log('[ARExperience] Background camera feed started.');
+                setCameraInterrupted(false);
+                console.log('[ARExperience] Background camera feed running.');
+            } else {
+                setCameraReady(false);
+                setCameraInterrupted(true);
             }
         } catch (err) {
-            console.warn('[ARExperience] Camera access denied or unavailable:', err);
+            console.warn('[ARExperience] Camera access denied or failed:', err);
             setCameraReady(false);
+            setCameraInterrupted(true);
         }
     }, []);
 
@@ -88,15 +93,71 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         console.log('[ARExperience] Background camera feed stopped.');
     }, []);
 
+    // Health check and recovery after Android share sheet or visibility change
+    const checkAndRestoreCamera = useCallback(async () => {
+        if (isInARSession) return;
+
+        const video = backgroundVideoRef.current;
+        if (!video) return;
+
+        const currentStream = video.srcObject as MediaStream | null;
+        const hasLiveTracks = currentStream && currentStream.active && currentStream.getVideoTracks().some(t => t.readyState === 'live');
+
+        if (hasLiveTracks) {
+            if (video.paused) {
+                try {
+                    console.log('[ARExperience] Resuming paused video playback after return...');
+                    await video.play();
+                    setCameraReady(true);
+                    setCameraInterrupted(false);
+                    return;
+                } catch (err) {
+                    console.warn('[ARExperience] video.play() failed on active stream:', err);
+                }
+            } else {
+                setCameraReady(true);
+                setCameraInterrupted(false);
+                return;
+            }
+        }
+
+        // Stream is dead or was terminated by Android while in background
+        console.log('[ARExperience] Camera stream inactive. Reacquiring fresh stream...');
+        await startBackgroundCamera(true);
+    }, [isInARSession, startBackgroundCamera]);
+
     // Mount: start background camera feed
     useEffect(() => {
         startBackgroundCamera();
         return () => {
-            // Full cleanup on unmount — release all camera resources
+            // Full cleanup ONLY on component unmount — release all camera resources
             stopBackgroundCamera();
             releaseCamera();
         };
     }, [startBackgroundCamera, stopBackgroundCamera]);
+
+    // Mobile Lifecycle Listeners: restore camera when returning from Android Share Sheet
+    useEffect(() => {
+        const handleVisibilityChange = async () => {
+            if (document.visibilityState === 'visible') {
+                console.log('[ARExperience] Page became visible. Restoring camera...');
+                await checkAndRestoreCamera();
+            }
+        };
+
+        const handleFocus = async () => {
+            console.log('[ARExperience] Window focus restored. Checking camera...');
+            await checkAndRestoreCamera();
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('focus', handleFocus);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('focus', handleFocus);
+        };
+    }, [checkAndRestoreCamera]);
 
     // Synchronize both HTML attribute and DOM property for <model-viewer> scale
     useEffect(() => {
@@ -221,10 +282,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     }, []);
 
     // ── AR Session lifecycle (Hardware Handshake) ──────────────
-    // CRITICAL: When native AR (ARCore/ARKit) takes over, we MUST release
-    // our getUserMedia tracks to prevent a hardware lock. The browser's
-    // native AR session needs exclusive camera access. When the user exits
-    // native AR, we re-acquire the camera for our composite capture pipeline.
     useEffect(() => {
         const viewer = modelViewerRef.current;
         if (!viewer) return;
@@ -245,7 +302,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 // Restart the background camera feed for our composite capture.
                 console.log('[ARExperience] AR session ended. Re-acquiring camera.');
                 setIsInARSession(false);
-                startBackgroundCamera();
+                startBackgroundCamera(true);
                 prewarmCamera();
                 // Model was already placed in native AR; return to PLACED state in web view
                 setArState('PLACED');
@@ -293,6 +350,12 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 autoPlay
                 playsInline
                 muted
+                onPause={() => {
+                    // If video pauses while page is active, automatically attempt to resume
+                    if (document.visibilityState === 'visible' && !isInARSession) {
+                        backgroundVideoRef.current?.play().catch(() => {});
+                    }
+                }}
                 className="absolute inset-0 w-full h-full z-[1]"
                 style={{
                     objectFit: 'cover',
@@ -325,13 +388,23 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             {/* Dish Info Header Badge (Top Center, away from bottom camera controls) */}
             {!isInARSession && (
                 <div
-                    className="absolute top-4 left-1/2 -translate-x-1/2 z-[80] bg-black/65 backdrop-blur-md px-4 py-2 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-140px)] shadow-xl pointer-events-none"
+                    className="absolute top-4 left-1/2 -translate-x-1/2 z-[80] bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-140px)] shadow-xl pointer-events-none"
                     style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
                 >
                     <span className="text-white text-xs font-bold truncate">{dishName}</span>
                     <span className="text-white/40 text-[10px]">·</span>
                     <span className="text-primary text-xs font-mono font-bold shrink-0">
                         {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
+                    </span>
+                    {/* Status Pill */}
+                    <span
+                        className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            isPlaced
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        }`}
+                    >
+                        {isPlaced ? 'Placed in AR' : 'Preview'}
                     </span>
                 </div>
             )}
@@ -370,62 +443,94 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 </div>
             )}
 
+            {/* ─── Camera Interruption Recovery Overlay ──────────────
+                 Self-healing action if OS halts camera while in background */}
+            {cameraInterrupted && !isInARSession && (
+                <div className="absolute inset-0 z-[85] bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+                    <div className="w-16 h-16 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mb-4">
+                        <span className="material-icons-round text-3xl text-amber-400">videocam_off</span>
+                    </div>
+                    <h3 className="text-white font-bold text-lg mb-1.5">Camera Paused</h3>
+                    <p className="text-white/70 text-xs max-w-xs mb-6 leading-relaxed">
+                        The camera was paused while sharing your photo. Tap below to resume the AR experience.
+                    </p>
+                    <button
+                        onClick={checkAndRestoreCamera}
+                        className="px-6 py-3.5 bg-white text-black font-bold text-sm rounded-full shadow-2xl hover:bg-gray-100 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                        <span className="material-icons-round text-lg">refresh</span>
+                        <span>Resume Camera</span>
+                    </button>
+                </div>
+            )}
+
             {/* ─── STAGE: READY_TO_PLACE (Floor Reticle Guide) ─────────
                  Indicates the flat surface area where the dish will anchor */}
             {isReadyToPlace && !isInARSession && (
-                <div className="absolute inset-0 z-[15] pointer-events-none flex items-center justify-center">
-                    <div className="w-56 h-24 rounded-[100%] border-2 border-dashed border-white/60 bg-white/5 animate-pulse flex items-center justify-center transform translate-y-16 shadow-[0_0_24px_rgba(255,255,255,0.2)]">
-                        <div className="w-2.5 h-2.5 rounded-full bg-white/80" />
+                <div className="absolute inset-0 z-[15] pointer-events-none flex flex-col items-center justify-center">
+                    <div className="w-64 h-28 rounded-[100%] border-2 border-dashed border-white/70 bg-white/5 animate-pulse flex flex-col items-center justify-center transform translate-y-20 shadow-[0_0_30px_rgba(255,255,255,0.25)]">
+                        <div className="w-3 h-3 rounded-full bg-white/90 mb-1" />
+                        <span className="text-[10px] font-bold text-white/80 uppercase tracking-wider">Placement Target</span>
                     </div>
                 </div>
             )}
 
             {/* ─── Layer 1: Transparent Model-Viewer ──────────────────
-                 The model-viewer renders the 3D dish with a TRANSPARENT
-                 background over the camera video feed. */}
-            {/* @ts-ignore - model-viewer is a web component */}
-            <model-viewer
-                ref={modelViewerRef}
-                className={`w-full h-full ${!isInitializing && !hasError ? 'animate-ar-pop' : 'opacity-0'}`}
-                src={modelUrl}
-                ios-src={iosSrc || modelUrl}
-                alt={alt}
-                scale={`${Number(arScale) || 1.0} ${Number(arScale) || 1.0} ${Number(arScale) || 1.0}`}
-                ar
-                ar-modes="webxr scene-viewer quick-look"
-                camera-controls
-                auto-rotate={isReadyToPlace}
-                rotation-per-second="25deg"
-                shadow-intensity={isPlaced ? '1.5' : '1.0'}
-                exposure="1"
-                ar-scale="fixed"
-                ar-placement="floor"
-                touch-action="pan-y"
-                style={{
-                    width: '100%',
-                    height: '100%',
-                    backgroundColor: 'transparent',
-                    position: 'relative',
-                    zIndex: 10,
-                }}
-                crossorigin="anonymous"
-                loading="eager"
-                reveal="auto"
-                environment-image="neutral"
+                 The model-viewer renders the 3D dish over the camera feed.
+                 In READY_TO_PLACE, it hovers slightly above ground (preview altitude).
+                 In PLACED, it anchors firmly with full contact shadow. */}
+            <div
+                className={`w-full h-full transition-all duration-500 ease-out ${
+                    isReadyToPlace
+                        ? 'transform -translate-y-6 scale-[0.96] opacity-85'
+                        : isPlacing
+                        ? 'transform -translate-y-2 scale-[0.98] opacity-95'
+                        : 'transform translate-y-0 scale-100 opacity-100'
+                }`}
+                style={{ position: 'relative', zIndex: 10 }}
             >
-                {/* Custom AR Button: Sleek unobtrusive Surface AR pill at top-left for Google Scene Viewer */}
-                <button 
-                    slot="ar-button" 
-                    className="absolute top-4 left-4 z-[70] bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-semibold px-3.5 py-2 rounded-full border border-white/20 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
-                    aria-label="View anchored on real-world flat surface using ARCore"
-                    style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
+                {/* @ts-ignore - model-viewer is a web component */}
+                <model-viewer
+                    ref={modelViewerRef}
+                    className={`w-full h-full ${!isInitializing && !hasError ? 'animate-ar-pop' : 'opacity-0'}`}
+                    src={modelUrl}
+                    ios-src={iosSrc || modelUrl}
+                    alt={alt}
+                    scale={`${Number(arScale) || 1.0} ${Number(arScale) || 1.0} ${Number(arScale) || 1.0}`}
+                    ar
+                    ar-modes="webxr scene-viewer quick-look"
+                    camera-controls
+                    auto-rotate={isReadyToPlace}
+                    rotation-per-second="25deg"
+                    shadow-intensity={isPlaced ? '1.8' : '0.4'}
+                    exposure="1"
+                    ar-scale="fixed"
+                    ar-placement="floor"
+                    touch-action="pan-y"
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        backgroundColor: 'transparent',
+                    }}
+                    crossorigin="anonymous"
+                    loading="eager"
+                    reveal="auto"
+                    environment-image="neutral"
                 >
-                    <span className="material-icons-round text-sm text-primary">view_in_ar</span>
-                    <span>Surface AR</span>
-                </button>
+                    {/* Custom AR Button: Sleek unobtrusive Surface AR pill at top-left for Google Scene Viewer */}
+                    <button 
+                        slot="ar-button" 
+                        className="absolute top-4 left-4 z-[70] bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-semibold px-3.5 py-2 rounded-full border border-white/20 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
+                        aria-label="View anchored on real-world flat surface using ARCore"
+                        style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
+                    >
+                        <span className="material-icons-round text-sm text-primary">view_in_ar</span>
+                        <span>Surface AR</span>
+                    </button>
 
-                {/* @ts-ignore */}
-            </model-viewer>
+                    {/* @ts-ignore */}
+                </model-viewer>
+            </div>
 
             {/* ─── STAGE: READY_TO_PLACE & PLACING Controls ─────────────
                  Visible strictly before placement. The capture shutter is hidden. */}
@@ -436,7 +541,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 >
                     {/* Guidance Pill */}
                     {isReadyToPlace && (
-                        <div className="mb-3.5 bg-black/75 backdrop-blur-xl px-4 py-2 rounded-full border border-white/20 text-white text-xs font-medium flex items-center gap-2 shadow-2xl animate-pulse pointer-events-auto">
+                        <div className="mb-3.5 bg-black/80 backdrop-blur-xl px-4 py-2 rounded-full border border-white/25 text-white text-xs font-medium flex items-center gap-2 shadow-2xl animate-pulse pointer-events-auto">
                             <span className="material-icons-round text-base text-primary">control_camera</span>
                             <span>Aim camera at a flat surface &amp; tap to place</span>
                         </div>
@@ -461,7 +566,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                         {isPlacing ? (
                             <>
                                 <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                                <span>Placing dish...</span>
+                                <span>Anchoring dish to surface...</span>
                             </>
                         ) : (
                             <>
