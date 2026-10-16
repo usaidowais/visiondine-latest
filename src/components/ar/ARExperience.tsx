@@ -20,6 +20,17 @@ interface ARExperienceProps {
     onClose: () => void;
 }
 
+// ─── State Machine Types ─────────────────────────────────────────
+
+export type ARState =
+    | 'INITIALIZING'
+    | 'READY_TO_PLACE'
+    | 'PLACING'
+    | 'PLACED'
+    | 'CAPTURING_PHOTO'
+    | 'RECORDING_VIDEO'
+    | 'ERROR';
+
 export const ARExperience: React.FC<ARExperienceProps> = ({
     src: modelUrl,
     iosSrc,
@@ -31,7 +42,8 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     restaurantName = 'VisionDine',
     onClose
 }) => {
-    const [isLoading, setIsLoading] = useState(true);
+    // ── Explicit AR State Machine ───────────────────────────────
+    const [arState, setArState] = useState<ARState>('INITIALIZING');
     const [loadingProgress, setLoadingProgress] = useState<number>(0);
     const [hasError, setHasError] = useState(false);
     const [isInARSession, setIsInARSession] = useState(false);
@@ -40,7 +52,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     const backgroundVideoRef = useRef<HTMLVideoElement>(null);
 
     // Log what we received
-    console.log("AR COMPONENT RECEIVED URL:", modelUrl);
+    console.log('[ARExperience] Received model URL:', modelUrl, 'Current state:', arState);
 
     // STRICT CHECK: No fallbacks. If empty, show error.
     // FIREWALL: Explicitly block the Astronaut URL if it comes from the DB
@@ -95,28 +107,37 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         (viewer as any).scale = s;
     }, [arScale]);
 
-    // ── Model load/error lifecycle ─────────────────────────────
+    // ── Model load/error lifecycle & State Transition ────────────
     useEffect(() => {
         const viewer = modelViewerRef.current;
         if (!viewer) return;
 
-        // Check if already loaded (cached or fast mount)
-        if ((viewer as any).loaded) {
-            setIsLoading(false);
-            return;
-        }
+        const advanceToReady = () => {
+            setArState((prev) => (prev === 'INITIALIZING' ? 'READY_TO_PLACE' : prev));
+        };
+
+        const checkLoaded = () => {
+            if ((viewer as any).loaded || (viewer as any).modelIsVisible) {
+                console.log('[ARExperience] Model is loaded/visible. Advancing to READY_TO_PLACE');
+                advanceToReady();
+                return true;
+            }
+            return false;
+        };
+
+        if (checkLoaded()) return;
 
         // 1. Success Handler
         const handleLoad = () => {
-            console.log("Model Loaded Successfully! (Event Listener)");
-            setIsLoading(false);
+            console.log('[ARExperience] Model Loaded Successfully! Transitioning to READY_TO_PLACE');
+            advanceToReady();
         };
 
         // 2. Error Handler
         const handleError = (e: any) => {
-            console.error("Model Failed (Event Listener):", e);
+            console.error('[ARExperience] Model Failed to load:', e);
             setHasError(true);
-            setIsLoading(false);
+            setArState('ERROR');
         };
 
         // 3. Progress Handler (for slow cellular/network connections)
@@ -125,7 +146,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             if (typeof progress === 'number') {
                 setLoadingProgress(progress);
                 if (progress >= 1) {
-                    setIsLoading(false);
+                    advanceToReady();
                 }
             }
         };
@@ -135,21 +156,69 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         viewer.addEventListener('error', handleError);
         viewer.addEventListener('progress', handleProgress);
 
-        // 5. Extended Safety Timeout for slow 3G/4G connections (30 seconds)
-        const safetyTimer = setTimeout(() => {
-            if ((viewer as any).loaded) {
-                console.warn("Safety timer check: Model already loaded, hiding loader.");
-                setIsLoading(false);
+        // 5. Active Poll check (every 300ms) for fast/cached loads & custom element upgrade
+        const pollInterval = setInterval(() => {
+            if (checkLoaded()) {
+                clearInterval(pollInterval);
             }
-        }, 30000);
+        }, 300);
+
+        // 6. Reasonable safety fallback (3.5 seconds) so user is never stranded on INITIALIZING
+        const safetyTimer = setTimeout(() => {
+            console.warn('[ARExperience] Safety timeout reached, transitioning to READY_TO_PLACE.');
+            advanceToReady();
+        }, 3500);
 
         return () => {
             viewer.removeEventListener('load', handleLoad);
             viewer.removeEventListener('error', handleError);
             viewer.removeEventListener('progress', handleProgress);
+            clearInterval(pollInterval);
             clearTimeout(safetyTimer);
         };
-    }, []); // Run once on mount
+    }, []);
+
+    // ── Placement Action Handlers ────────────────────────────────
+    const handlePlace = useCallback(() => {
+        if (arState !== 'READY_TO_PLACE') return;
+
+        console.log('[ARExperience] User triggered Place in your space. Transitioning to PLACING.');
+        setArState('PLACING');
+
+        // Tactile Haptic Feedback
+        if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+            try {
+                navigator.vibrate([40, 30, 60]);
+            } catch {}
+        }
+
+        // Lock model in position: stop auto-rotation so it anchors firmly to table
+        const viewer = modelViewerRef.current as any;
+        if (viewer) {
+            viewer.autoRotate = false;
+        }
+
+        // Brief settling animation before confirming PLACED
+        setTimeout(() => {
+            console.log('[ARExperience] Dish placed and anchored. Transitioning to PLACED.');
+            setArState('PLACED');
+        }, 400);
+    }, [arState]);
+
+    const handleReposition = useCallback(() => {
+        console.log('[ARExperience] User requested Reposition. Returning to READY_TO_PLACE.');
+        setArState('READY_TO_PLACE');
+
+        // Resume gentle auto-rotate for floating preview
+        const viewer = modelViewerRef.current as any;
+        if (viewer) {
+            viewer.autoRotate = true;
+        }
+    }, []);
+
+    const handleCaptureSubState = useCallback((subState: 'CAPTURING_PHOTO' | 'RECORDING_VIDEO' | 'PLACED') => {
+        setArState(subState);
+    }, []);
 
     // ── AR Session lifecycle (Hardware Handshake) ──────────────
     // CRITICAL: When native AR (ARCore/ARKit) takes over, we MUST release
@@ -165,22 +234,21 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             console.log('[ARExperience] ar-status changed:', status);
 
             if (status === 'session-started') {
-                // ─── HARDWARE HANDSHAKE: RELEASE ─────────────────────
                 // Native AR is taking over — stop ALL camera tracks from
                 // our background video feed to free the hardware for ARCore/ARKit.
-                // Without this, the browser will report a hardware lock error.
                 console.log('[ARExperience] Native AR session started. Releasing camera hardware.');
                 stopBackgroundCamera();
                 releaseCamera();
                 setIsInARSession(true);
             } else if (status === 'not-presenting') {
-                // ─── HARDWARE HANDSHAKE: RE-ACQUIRE ──────────────────
                 // User exited native AR — back to 3D web view.
                 // Restart the background camera feed for our composite capture.
                 console.log('[ARExperience] AR session ended. Re-acquiring camera.');
                 setIsInARSession(false);
                 startBackgroundCamera();
                 prewarmCamera();
+                // Model was already placed in native AR; return to PLACED state in web view
+                setArState('PLACED');
             }
         };
 
@@ -190,8 +258,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             viewer.removeEventListener('ar-status', handleARStatus);
         };
     }, [startBackgroundCamera, stopBackgroundCamera]);
-
-    // Mobile-safe CSS animation takes over the entrance scaling and rotation (defined in globals.css)
 
     if (!isValidUrl) {
         return (
@@ -212,12 +278,16 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         );
     }
 
+    const isInitializing = arState === 'INITIALIZING';
+    const isReadyToPlace = arState === 'READY_TO_PLACE';
+    const isPlacing = arState === 'PLACING';
+    const isPlaced = arState === 'PLACED' || arState === 'CAPTURING_PHOTO' || arState === 'RECORDING_VIDEO';
+
     return (
-        <div className="absolute inset-0 z-50 bg-black">
+        <div className="absolute inset-0 z-50 bg-black overflow-hidden select-none">
             {/* ─── Layer 0: Background Camera Video Feed ──────────────
-                 This <video> streams getUserMedia (rear camera) and sits
-                 BEHIND the transparent model-viewer, creating the
-                 "Pseudo-AR" effect that bypasses the WebXR black screen. */}
+                 Streams getUserMedia (rear camera) and sits BEHIND the
+                 transparent model-viewer, creating the web AR experience. */}
             <video
                 ref={backgroundVideoRef}
                 autoPlay
@@ -226,7 +296,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 className="absolute inset-0 w-full h-full z-[1]"
                 style={{
                     objectFit: 'cover',
-                    transform: 'scaleX(1)',   // No mirror for rear camera
+                    transform: 'scaleX(1)',
                     pointerEvents: 'none',
                 }}
             />
@@ -241,16 +311,34 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 />
             )}
 
-            {/* Close Button — always visible, even in AR (sits above everything) */}
+            {/* Close Button — always accessible at top-right, respecting safe area */}
             <button
+                id="ar-close-button"
                 onClick={onClose}
-                className="absolute top-4 right-4 z-[70] bg-white text-black w-10 h-10 rounded-full flex items-center justify-center font-bold shadow-lg hover:bg-gray-100 active:scale-95 transition-all"
+                className="absolute top-4 right-4 z-[90] bg-white text-black w-10 h-10 rounded-full flex items-center justify-center font-bold shadow-2xl hover:bg-gray-100 active:scale-95 transition-all"
+                style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
+                aria-label="Close AR experience"
             >
                 ✕
             </button>
 
-            {/* Loading Indicator - Shows while loading with progress tracking for slow connections */}
-            {isLoading && !hasError && (
+            {/* Dish Info Header Badge (Top Center, away from bottom camera controls) */}
+            {!isInARSession && (
+                <div
+                    className="absolute top-4 left-1/2 -translate-x-1/2 z-[80] bg-black/65 backdrop-blur-md px-4 py-2 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-140px)] shadow-xl pointer-events-none"
+                    style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
+                >
+                    <span className="text-white text-xs font-bold truncate">{dishName}</span>
+                    <span className="text-white/40 text-[10px]">·</span>
+                    <span className="text-primary text-xs font-mono font-bold shrink-0">
+                        {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
+                    </span>
+                </div>
+            )}
+
+            {/* ─── STAGE: INITIALIZING ────────────────────────────────
+                 Shows loading spinner while model GLB or camera streams */}
+            {isInitializing && !hasError && (
                 <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
                     <div className="w-10 h-10 border-2 border-white/20 border-t-white rounded-full animate-spin mb-3"></div>
                     <span className="text-white text-sm font-medium tracking-wide">
@@ -262,8 +350,9 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 </div>
             )}
 
-            {/* Error Overlay */}
-            {hasError && (
+            {/* ─── STAGE: ERROR ───────────────────────────────────────
+                 Shown if model failed to load or asset network failure */}
+            {(arState === 'ERROR' || hasError) && (
                 <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/95 text-center p-6">
                     <div className="w-14 h-14 rounded-full bg-red-500/20 text-red-500 flex items-center justify-center mb-4">
                         <span className="material-icons-round text-3xl">error_outline</span>
@@ -281,14 +370,23 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 </div>
             )}
 
+            {/* ─── STAGE: READY_TO_PLACE (Floor Reticle Guide) ─────────
+                 Indicates the flat surface area where the dish will anchor */}
+            {isReadyToPlace && !isInARSession && (
+                <div className="absolute inset-0 z-[15] pointer-events-none flex items-center justify-center">
+                    <div className="w-56 h-24 rounded-[100%] border-2 border-dashed border-white/60 bg-white/5 animate-pulse flex items-center justify-center transform translate-y-16 shadow-[0_0_24px_rgba(255,255,255,0.2)]">
+                        <div className="w-2.5 h-2.5 rounded-full bg-white/80" />
+                    </div>
+                </div>
+            )}
+
             {/* ─── Layer 1: Transparent Model-Viewer ──────────────────
                  The model-viewer renders the 3D dish with a TRANSPARENT
-                 background, allowing the camera video feed to show through.
-                 This is the core of the "Pseudo-AR" technique. */}
+                 background over the camera video feed. */}
             {/* @ts-ignore - model-viewer is a web component */}
             <model-viewer
                 ref={modelViewerRef}
-                className={`w-full h-full ${!isLoading && !hasError ? 'animate-ar-pop' : 'opacity-0'}`}
+                className={`w-full h-full ${!isInitializing && !hasError ? 'animate-ar-pop' : 'opacity-0'}`}
                 src={modelUrl}
                 ios-src={iosSrc || modelUrl}
                 alt={alt}
@@ -296,8 +394,9 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 ar
                 ar-modes="webxr scene-viewer quick-look"
                 camera-controls
-                auto-rotate
-                shadow-intensity="1"
+                auto-rotate={isReadyToPlace}
+                rotation-per-second="25deg"
+                shadow-intensity={isPlaced ? '1.5' : '1.0'}
                 exposure="1"
                 ar-scale="fixed"
                 ar-placement="floor"
@@ -314,12 +413,12 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 reveal="auto"
                 environment-image="neutral"
             >
-
-                {/* Custom AR Button: Sleek unobtrusive Surface AR pill at top-left */}
+                {/* Custom AR Button: Sleek unobtrusive Surface AR pill at top-left for Google Scene Viewer */}
                 <button 
                     slot="ar-button" 
                     className="absolute top-4 left-4 z-[70] bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-semibold px-3.5 py-2 rounded-full border border-white/20 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
                     aria-label="View anchored on real-world flat surface using ARCore"
+                    style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
                 >
                     <span className="material-icons-round text-sm text-primary">view_in_ar</span>
                     <span>Surface AR</span>
@@ -328,28 +427,62 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 {/* @ts-ignore */}
             </model-viewer>
 
-            {/* Dish Info Header Badge (Top Center, away from bottom camera controls) */}
-            {!isInARSession && (
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70] bg-black/60 backdrop-blur-md px-4 py-2 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-160px)] shadow-lg pointer-events-none">
-                    <span className="text-white text-xs font-bold truncate">{dishName}</span>
-                    <span className="text-white/40 text-[10px]">·</span>
-                    <span className="text-primary text-xs font-mono font-bold shrink-0">
-                        {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
-                    </span>
+            {/* ─── STAGE: READY_TO_PLACE & PLACING Controls ─────────────
+                 Visible strictly before placement. The capture shutter is hidden. */}
+            {!isInARSession && (isReadyToPlace || isPlacing) && (
+                <div
+                    className="absolute bottom-16 left-0 right-0 z-[80] flex flex-col items-center pointer-events-none px-6"
+                    style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 16px) + 0.5rem)' }}
+                >
+                    {/* Guidance Pill */}
+                    {isReadyToPlace && (
+                        <div className="mb-3.5 bg-black/75 backdrop-blur-xl px-4 py-2 rounded-full border border-white/20 text-white text-xs font-medium flex items-center gap-2 shadow-2xl animate-pulse pointer-events-auto">
+                            <span className="material-icons-round text-base text-primary">control_camera</span>
+                            <span>Aim camera at a flat surface &amp; tap to place</span>
+                        </div>
+                    )}
+
+                    {/* Primary "Place in your space" Button */}
+                    <button
+                        id="ar-place-button"
+                        onClick={handlePlace}
+                        disabled={isPlacing}
+                        className={`
+                            pointer-events-auto w-full max-w-xs py-4 px-6 rounded-full font-extrabold text-base
+                            flex items-center justify-center gap-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.6)]
+                            border-2 border-white/90 active:scale-95 transition-all
+                            ${isPlacing
+                                ? 'bg-white/90 text-black cursor-wait opacity-90'
+                                : 'bg-white text-black hover:bg-gray-100 hover:shadow-[0_16px_40px_rgba(255,255,255,0.25)]'
+                            }
+                        `}
+                        aria-label="Place dish in your space"
+                    >
+                        {isPlacing ? (
+                            <>
+                                <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                                <span>Placing dish...</span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="material-icons-round text-2xl text-black">view_in_ar</span>
+                                <span>Place in your space</span>
+                            </>
+                        )}
+                    </button>
                 </div>
             )}
 
-            {/*
-              Camera Shutter Capture Overlay
-              ─────────────────────────────────────────────────────────
-              Directly active and usable as soon as the camera AR mode opens.
-              Tap to snap a photo with branded watermark, or hold to record video.
-            */}
-            {!isInARSession && (
+            {/* ─── STAGE: PLACED Controls (Capture Overlay) ────────────
+                 Visible strictly AFTER confirmed placement.
+                 Includes photo shutter, hold-for-video, and Reposition Dish option. */}
+            {!isInARSession && isPlaced && (
                 <CaptureOverlay
                     modelViewerRef={modelViewerRef}
                     dishName={dishName}
                     restaurantName={restaurantName}
+                    onStateChange={handleCaptureSubState}
+                    onReposition={handleReposition}
                 />
             )}
         </div>

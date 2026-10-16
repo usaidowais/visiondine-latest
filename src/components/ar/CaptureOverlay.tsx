@@ -11,10 +11,14 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────
 
+export type CaptureSubState = 'CAPTURING_PHOTO' | 'RECORDING_VIDEO' | 'PLACED';
+
 interface CaptureOverlayProps {
   modelViewerRef: React.RefObject<HTMLElement | null>;
   dishName: string;
   restaurantName: string;
+  onStateChange?: (state: CaptureSubState) => void;
+  onReposition?: () => void;
 }
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -28,6 +32,8 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
   modelViewerRef,
   dishName,
   restaurantName,
+  onStateChange,
+  onReposition,
 }) => {
   const [isFlashing, setIsFlashing] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -60,6 +66,7 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
 
     setIsCapturing(true);
     setIsFlashing(true);
+    onStateChange?.('CAPTURING_PHOTO');
     setTimeout(() => setIsFlashing(false), 150);
 
     try {
@@ -70,9 +77,12 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
     } catch (error) {
       console.error('[CaptureOverlay] Photo capture error:', error);
     } finally {
-      setTimeout(() => setIsCapturing(false), 500);
+      setTimeout(() => {
+        setIsCapturing(false);
+        onStateChange?.('PLACED');
+      }, 500);
     }
-  }, [isCapturing, isRecording, modelViewerRef, dishName, restaurantName]);
+  }, [isCapturing, isRecording, modelViewerRef, dishName, restaurantName, onStateChange]);
 
   // ─── Video Recording ───────────────────────────────────────
 
@@ -81,6 +91,7 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
 
     setIsRecording(true);
     setRecordingSeconds(0);
+    onStateChange?.('RECORDING_VIDEO');
 
     const handle = startVideoRecording(modelViewerRef.current, {
       dishName,
@@ -95,7 +106,7 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
     }, 1000);
 
     console.log('[CaptureOverlay] Recording started.');
-  }, [isRecording, modelViewerRef, dishName, restaurantName]);
+  }, [isRecording, modelViewerRef, dishName, restaurantName, onStateChange]);
 
   const stopRecording = useCallback(() => {
     if (!isRecording) return;
@@ -112,8 +123,9 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
 
     setIsRecording(false);
     setRecordingSeconds(0);
+    onStateChange?.('PLACED');
     console.log('[CaptureOverlay] Recording stopped.');
-  }, [isRecording]);
+  }, [isRecording, onStateChange]);
 
   // ─── Pointer Handlers (Tap vs Hold) ────────────────────────
 
@@ -221,6 +233,21 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
         id="capture-overlay"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}
       >
+        {/* Reposition / Adjust Pill */}
+        {onReposition && !isRecording && (
+          <button
+            id="ar-reposition-button"
+            onClick={onReposition}
+            type="button"
+            disabled={isCapturing}
+            className="pointer-events-auto mb-3.5 bg-black/70 hover:bg-black/90 active:scale-95 backdrop-blur-md text-white text-xs font-semibold px-4 py-2 rounded-full border border-white/25 flex items-center gap-1.5 shadow-xl transition-all"
+            aria-label="Reposition dish in space"
+          >
+            <span className="material-icons-round text-sm text-primary">tune</span>
+            <span>Reposition Dish</span>
+          </button>
+        )}
+
         {/* Shutter Button — tap for photo, hold for video */}
         <button
           id="ar-capture-button"
