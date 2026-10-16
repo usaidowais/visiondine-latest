@@ -47,6 +47,13 @@ export interface Dish {
   glb_url?: string; // For Android/Web
   usdz_url?: string; // For iOS AR Quick Look
   ar_scale?: number; // Scaling factor for AR models
+  calibration_factor?: number; // Calibration factor for 3D model geometry (default: 1.0)
+  target_dimensions_cm?: {
+    width?: number;
+    height?: number;
+    depth?: number;
+    diameter?: number;
+  };
   category: string;
 }
 

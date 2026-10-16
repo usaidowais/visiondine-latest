@@ -35,10 +35,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     const [loadingProgress, setLoadingProgress] = useState<number>(0);
     const [hasError, setHasError] = useState(false);
     const [isInARSession, setIsInARSession] = useState(false);
-    // The first screen is only a placement prompt. Capture controls become
-    // available after the visitor has chosen to place the model. Native AR
-    // still hides them because the native viewer owns the camera.
-    const [hasStartedPlacement, setHasStartedPlacement] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
     const modelViewerRef = useRef<HTMLElement>(null);
     const backgroundVideoRef = useRef<HTMLVideoElement>(null);
@@ -89,6 +85,15 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             releaseCamera();
         };
     }, [startBackgroundCamera, stopBackgroundCamera]);
+
+    // Synchronize both HTML attribute and DOM property for <model-viewer> scale
+    useEffect(() => {
+        const viewer = modelViewerRef.current;
+        if (!viewer) return;
+        const s = `${Number(arScale) || 1.0} ${Number(arScale) || 1.0} ${Number(arScale) || 1.0}`;
+        viewer.setAttribute('scale', s);
+        (viewer as any).scale = s;
+    }, [arScale]);
 
     // ── Model load/error lifecycle ─────────────────────────────
     useEffect(() => {
@@ -310,78 +315,42 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 environment-image="neutral"
             >
 
-                {/* AR Prompt Slot */}
-                <div slot="ar-prompt" className="absolute top-24 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 pointer-events-none w-full px-6">
-                    <div className="bg-white/10 backdrop-blur-xl border border-white/20 px-6 py-4 rounded-2xl flex items-center gap-4 shadow-2xl">
-                        <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                            <span className="material-icons-round text-white text-xl animate-pulse">view_in_ar</span>
-                        </div>
-                        <div className="flex flex-col text-left">
-                            <span className="text-white text-sm font-bold tracking-wide">Ready to Place</span>
-                            <span className="text-white/70 text-xs">Point camera at a flat surface</span>
-                        </div>
-                    </div>
-                </div>
-
-
-                {/* Custom AR Button (Strictly Required for iOS/Android Native AR Launch) */}
+                {/* Custom AR Button: Sleek unobtrusive Surface AR pill at top-left */}
                 <button 
                     slot="ar-button" 
-                    onClick={() => setHasStartedPlacement(true)}
-                    className="absolute bottom-52 left-1/2 transform -translate-x-1/2 bg-white text-black px-6 py-3 rounded-full font-bold shadow-lg z-[80] active:scale-95 transition-transform"
+                    className="absolute top-4 left-4 z-[70] bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-semibold px-3.5 py-2 rounded-full border border-white/20 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
+                    aria-label="View anchored on real-world flat surface using ARCore"
                 >
-                    Place in your space
+                    <span className="material-icons-round text-sm text-primary">view_in_ar</span>
+                    <span>Surface AR</span>
                 </button>
 
                 {/* @ts-ignore */}
             </model-viewer>
 
+            {/* Dish Info Header Badge (Top Center, away from bottom camera controls) */}
+            {!isInARSession && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[70] bg-black/60 backdrop-blur-md px-4 py-2 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-160px)] shadow-lg pointer-events-none">
+                    <span className="text-white text-xs font-bold truncate">{dishName}</span>
+                    <span className="text-white/40 text-[10px]">·</span>
+                    <span className="text-primary text-xs font-mono font-bold shrink-0">
+                        {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
+                    </span>
+                </div>
+            )}
+
             {/*
               Camera Shutter Capture Overlay
               ─────────────────────────────────────────────────────────
-              ONLY visible in the standard 3D web view (not in native AR).
-              
-              When native AR is active (isInARSession === true):
-              - Our getUserMedia camera is released (hardware freed for ARCore/ARKit)
-              - WebXR blocks JS pixel access, so composite capture is impossible
-              - User relies on the native system screenshot/AR UI instead
-              
-              When back in 3D web view (isInARSession === false):
-              - Camera is re-warmed for composite capture
-              - Shutter button is visible and functional
-              
-              The shutter triggers the composite capture pipeline in captureUtils:
-              1) Draws the background <video> frame onto an offscreen canvas
-              2) Draws the model-viewer WebGL canvas (from shadowRoot) on top
-              3) Applies the VisionDine watermark + dish name
-              4) Exports as high-res PNG (photo) or MP4/WebM (video)
+              Directly active and usable as soon as the camera AR mode opens.
+              Tap to snap a photo with branded watermark, or hold to record video.
             */}
-            {!isInARSession && hasStartedPlacement && (
+            {!isInARSession && (
                 <CaptureOverlay
                     modelViewerRef={modelViewerRef}
                     dishName={dishName}
                     restaurantName={restaurantName}
                 />
-            )}
-
-            {/* Bottom Info Card — also hidden during native AR session */}
-            {!isInARSession && (
-                <div className="absolute bottom-6 left-4 right-4 z-[60] pointer-events-none">
-                    <div className="bg-white/95 backdrop-blur-2xl rounded-2xl p-4 shadow-[0_8px_32px_rgba(0,0,0,0.5)] border border-white/50 pointer-events-auto">
-                        <div className="flex justify-between items-center">
-                            <div>
-                                <h2 className="text-lg font-bold text-gray-900 font-serif leading-tight">{dishName}</h2>
-                                <p className="text-gray-500 text-[10px] mt-0.5 uppercase tracking-wider font-bold">AR Preview</p>
-                            </div>
-                            <span
-                                className="text-base font-bold font-serif px-2 py-1 bg-gray-100 rounded-lg"
-                                style={{ color: secondaryColor }}
-                            >
-                                {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
-                            </span>
-                        </div>
-                    </div>
-                </div>
             )}
         </div>
     );

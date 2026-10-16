@@ -4,6 +4,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/Button';
 import { supabaseService, supabase } from '@/lib/services/supabaseService';
 import { Dish } from '@/lib/types';
+import {
+    calculateArScale,
+    calculatePhysicalDimensions,
+    calculateTargetDiameterFromScale,
+    type Dimensions3D,
+    type PhysicalDimensionsCm
+} from '@/lib/utils/arSizing';
 
 export default function ARDemoAdminPage() {
     const [loading, setLoading] = useState(true);
@@ -18,25 +25,24 @@ export default function ARDemoAdminPage() {
     const [category, setCategory] = useState('Specialty');
     const [imageUrl, setImageUrl] = useState('');
     const [glbUrl, setGlbUrl] = useState('');
-    // ── Scale / Dimension State ──────────────────────────────────
-    // We mirror the exact pattern used in /admin/restaurants/[id]/menu/[dishId]/page.tsx.
+
+    // ── Physical Sizing & Calibration State ──────────────────────
+    // Decouples preview camera framing from physical AR scale.
     //
-    // arScale  = the TRUE stored value (currentScale × autoScaleFactor).
-    //            This is what gets persisted to Supabase and passed to ARExperience.
-    //
-    // currentScale     = the relative UI slider value (0.1 – 3.0).
-    //                    "1.0" means 'use the auto-normalised size'.
-    //
-    // autoScaleFactor  = computed once when the model loads via getDimensions().
-    //                    Formula: 0.2 / maxDim  (normalises largest axis to 20 cm).
-    //
-    // baseDim          = raw metre dimensions returned by getDimensions().
-    //                    Physical cm = baseDim.axis × currentScale × autoScaleFactor × 100.
-    const [arScale, setArScale] = useState<number>(1.0);
-    const [currentScale, setCurrentScale] = useState<number>(1.0);
-    const [autoScaleFactor, setAutoScaleFactor] = useState<number>(1.0);
-    const [baseDim, setBaseDim] = useState({ x: 0, y: 0, z: 0 });
+    // rawDims: Raw unscaled bounding box dimensions (in meters) from getDimensions().
+    // rawMaxMeters: Longest planar axis max(x, z) in meters.
+    // targetDiameterCm: Intended real-world diameter in centimetres (e.g., 20.0, 9.0).
+    // relativeScaleSlider: Synchronized relative multiplier (0.1× – 3.0×, where 1.0× = 20 cm).
+    // calibrationFactor: Geometry unit conversion multiplier (default: 1.0 = raw geometry).
+    const [rawDims, setRawDims] = useState<Dimensions3D>({ x: 0.8418, y: 0.0435, z: 0.8418 });
+    const [rawMaxMeters, setRawMaxMeters] = useState<number>(0.8418);
     const [dimsReady, setDimsReady] = useState(false);
+
+    const [targetDiameterCm, setTargetDiameterCm] = useState<number>(20.0);
+    const [relativeScaleSlider, setRelativeScaleSlider] = useState<number>(1.0);
+    const [calibrationFactor, setCalibrationFactor] = useState<number>(1.0);
+    const [showCalibration, setShowCalibration] = useState<boolean>(false);
+    const [customRefInput, setCustomRefInput] = useState<string>('');
 
     // Model Upload State
     const [modelUploadProgress, setModelUploadProgress] = useState<number | null>(null);
@@ -65,9 +71,24 @@ export default function ARDemoAdminPage() {
     const modelViewerRef = useRef<any>(null);
     const modelFileInputRef = useRef<HTMLInputElement>(null);
     const imageFileInputRef = useRef<HTMLInputElement>(null);
-    // Ref to track the latest persisted true scale — avoids stale closures in
-    // the getDimensions load handler when glbUrl changes.
+
+    // Refs to track persisted scale/calibration values across async loads without stale closures
     const loadedTrueScaleRef = useRef<number>(1.0);
+    const loadedCalibrationRef = useRef<number>(1.0);
+    const loadedTargetDiameterRef = useRef<number | null>(null);
+
+    // Derived physical dimensions and model scale (live calculated)
+    const currentArScale = calculateArScale({
+        rawMaxMeters: rawMaxMeters > 0 ? rawMaxMeters : 0.8418,
+        targetDiameterCm,
+        calibrationFactor
+    });
+
+    const physicalDims: PhysicalDimensionsCm = calculatePhysicalDimensions({
+        rawDimensions: rawDims.x > 0 ? rawDims : { x: 0.8418, y: 0.0435, z: 0.8418 },
+        arScale: currentArScale,
+        calibrationFactor
+    });
 
     const publicDemoUrl = typeof window !== 'undefined'
         ? `${window.location.origin}/menu/khansaab/dish/wood-fired-pizza`
@@ -87,9 +108,20 @@ export default function ARDemoAdminPage() {
                     setCategory(demoDish.category || 'Specialty');
                     setImageUrl(demoDish.image_url || '/dish-pizza.svg');
                     setGlbUrl(demoDish.glb_url || '/assets/pizza-source.glb');
+
                     const trueScale = demoDish.ar_scale || 1.0;
-                    setArScale(trueScale);
                     loadedTrueScaleRef.current = trueScale;
+
+                    const calFactor = demoDish.calibration_factor || 1.0;
+                    setCalibrationFactor(calFactor);
+                    loadedCalibrationRef.current = calFactor;
+
+                    if (demoDish.target_dimensions_cm?.diameter) {
+                        const d = demoDish.target_dimensions_cm.diameter;
+                        setTargetDiameterCm(d);
+                        setRelativeScaleSlider(Number((d / 20.0).toFixed(2)));
+                        loadedTargetDiameterRef.current = d;
+                    }
                 }
             } catch (err: any) {
                 console.error('Failed to load demo dish:', err);
@@ -106,7 +138,7 @@ export default function ARDemoAdminPage() {
         loadDemoData();
     }, []);
 
-    // Listen to <model-viewer> load/error events + compute physical dimensions
+    // Listen to <model-viewer> load/error events + compute unpolluted raw geometry
     useEffect(() => {
         const viewer = modelViewerRef.current;
         if (!viewer) return;
@@ -119,26 +151,40 @@ export default function ARDemoAdminPage() {
             setModelViewerLoading(false);
             setModelViewerError(false);
 
-            // ── getDimensions() approach (same as menu editor) ──────
             try {
+                // Since preview <model-viewer> is rendered unscaled, getDimensions()
+                // returns the pure, unpolluted raw geometry dimensions in meters!
                 const dims = (viewer as any).getDimensions();
                 if (dims && typeof dims.x === 'number') {
-                    setBaseDim({ x: dims.x, y: dims.y, z: dims.z });
+                    const raw: Dimensions3D = { x: dims.x, y: dims.y, z: dims.z };
+                    setRawDims(raw);
+                    const maxM = Math.max(dims.x, dims.z) || dims.y;
+                    setRawMaxMeters(maxM);
 
-                    const maxDim = Math.max(dims.x, dims.y, dims.z);
-                    if (maxDim > 0) {
-                        const asFactor = 0.2 / maxDim; // normalise largest axis → ~20 cm
-                        setAutoScaleFactor(asFactor);
-
-                        // Use the ref — always current, never a stale closure.
-                        const loadedTrueScale = loadedTrueScaleRef.current;
-                        const uiScale = asFactor > 0 ? loadedTrueScale / asFactor : 1.0;
-                        setCurrentScale(Math.max(0.1, Math.min(3.0, uiScale)));
-                        setDimsReady(true);
+                    // Auto-frame the model to occupy ~80% of viewport without cropping
+                    if (typeof (viewer as any).updateFraming === 'function') {
+                        (viewer as any).updateFraming();
                     }
+
+                    // Restore saved physical diameter
+                    if (loadedTargetDiameterRef.current) {
+                        const d = loadedTargetDiameterRef.current;
+                        setTargetDiameterCm(d);
+                        setRelativeScaleSlider(Number((d / 20.0).toFixed(2)));
+                    } else if (loadedTrueScaleRef.current && maxM > 0) {
+                        const restored = calculateTargetDiameterFromScale({
+                            rawMaxMeters: maxM,
+                            arScale: loadedTrueScaleRef.current,
+                            calibrationFactor: loadedCalibrationRef.current
+                        });
+                        setTargetDiameterCm(restored);
+                        setRelativeScaleSlider(Number((restored / 20.0).toFixed(2)));
+                    }
+
+                    setDimsReady(true);
                 }
-            } catch (_) {
-                // getDimensions may not be available on all builds — silently ignore
+            } catch (err) {
+                console.warn('[ARDemoAdminPage] getDimensions notice:', err);
             }
         };
 
@@ -154,8 +200,7 @@ export default function ARDemoAdminPage() {
             viewer.removeEventListener('load', handleLoad);
             viewer.removeEventListener('error', handleError);
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [glbUrl]); // re-run whenever model URL changes
+    }, [glbUrl]);
 
     // Handle GLB Upload
     const handleModelFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -285,10 +330,17 @@ export default function ARDemoAdminPage() {
         }
 
         try {
-            // Compute true physical scale to persist (same formula as menu editor)
-            const trueScale = dimsReady
-                ? currentScale * autoScaleFactor
-                : (Number(arScale) || 1.0);
+            const currentArScale = calculateArScale({
+                rawMaxMeters: rawMaxMeters > 0 ? rawMaxMeters : 0.8418,
+                targetDiameterCm,
+                calibrationFactor
+            });
+
+            const physicalDims = calculatePhysicalDimensions({
+                rawDimensions: rawDims.x > 0 ? rawDims : { x: 0.8418, y: 0.0435, z: 0.8418 },
+                arScale: currentArScale,
+                calibrationFactor
+            });
 
             const updates: Partial<Dish> = {
                 name: dishName.trim(),
@@ -298,7 +350,14 @@ export default function ARDemoAdminPage() {
                 category: category.trim(),
                 image_url: imageUrl.trim() || '/dish-pizza.svg',
                 glb_url: glbUrl.trim() || '/assets/pizza-source.glb',
-                ar_scale: trueScale
+                ar_scale: currentArScale,
+                calibration_factor: calibrationFactor,
+                target_dimensions_cm: {
+                    width: physicalDims.width,
+                    height: physicalDims.height,
+                    depth: physicalDims.depth,
+                    diameter: targetDiameterCm
+                }
             };
 
             const result = await supabaseService.saveDemoDish(updates);
@@ -311,7 +370,7 @@ export default function ARDemoAdminPage() {
                 setSaveStatus({
                     type: 'success',
                     message: 'AR Demo Dish centrally saved to Supabase!',
-                    details: `Persisted via ${channels.join(' and ')}. Public visitors on any mobile device or browser at /menu/khansaab/dish/wood-fired-pizza will see these updates immediately.`
+                    details: `Persisted via ${channels.join(' and ')}. Configured physical diameter: ${targetDiameterCm.toFixed(1)} cm (ar_scale: ${currentArScale.toFixed(6)}). Public visitors will see these updates immediately.`
                 });
             } else {
                 setSaveStatus({
@@ -351,14 +410,15 @@ export default function ARDemoAdminPage() {
             setCategory(defaultDish.category);
             setImageUrl(defaultDish.image_url);
             setGlbUrl(defaultDish.glb_url || '/assets/pizza-source.glb');
-            const defaultTrueScale = defaultDish.ar_scale || 1.0;
-            setArScale(defaultTrueScale);
+
+            const defaultTrueScale = 0.237586; // normalises ~20 cm for pizza
+            setTargetDiameterCm(20.0);
+            setRelativeScaleSlider(1.0);
+            setCalibrationFactor(1.0);
             loadedTrueScaleRef.current = defaultTrueScale;
-            // Clear dimension state — will be recomputed when model reloads
+            loadedCalibrationRef.current = 1.0;
+            loadedTargetDiameterRef.current = 20.0;
             setDimsReady(false);
-            setBaseDim({ x: 0, y: 0, z: 0 });
-            setAutoScaleFactor(1.0);
-            setCurrentScale(1.0);
 
             setModelUploadSuccess(null);
             setModelUploadError(null);
@@ -805,85 +865,225 @@ export default function ARDemoAdminPage() {
                             </p>
                         </div>
 
-                        {/* AR Size / Dimension Slider ─────────────────────────────────
-                             Mirrors the "AR Live Dimension Scaling" tool in the menu editor.
-                             currentScale is the relative UI value (0.1–3.0).
-                             trueScale = currentScale × autoScaleFactor (persisted).
-                             cm = baseDim.axis × trueScale × 100.
-                        */}
-                        <div className="border-t border-border/40 pt-5 space-y-4">
-                            <div className="flex justify-between items-start">
-                                <div>
-                                    <label className="text-xs font-bold text-foreground uppercase tracking-wider block">
-                                        AR Display Size
+                        {/* ── AR Target Physical Sizing & Calibration Controls ── */}
+                        <div className="border-t border-border/40 pt-5 space-y-5">
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                        <span className="material-icons-round text-primary text-sm">straighten</span>
+                                        Target Physical Diameter
                                     </label>
-                                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                                        Drag to resize. 1.0× = auto-normalised (~20 cm longest side).
-                                    </p>
+                                    <span className="font-mono text-sm font-bold bg-primary/10 text-primary px-3 py-1 rounded-lg border border-primary/20">
+                                        {targetDiameterCm.toFixed(1)} cm
+                                    </span>
                                 </div>
-                                <span className="font-mono text-xs font-bold bg-primary/10 text-primary px-2.5 py-1 rounded-md border border-primary/20 shrink-0">
-                                    {currentScale.toFixed(2)}×
-                                </span>
-                            </div>
-
-                            <input
-                                type="range"
-                                min="0.1"
-                                max="3.0"
-                                step="0.05"
-                                value={currentScale}
-                                onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    setCurrentScale(val);
-                                    // Update preview model-viewer scale live
-                                    if (modelViewerRef.current) {
-                                        const s = (val * autoScaleFactor).toFixed(6);
-                                        (modelViewerRef.current as any).setAttribute('scale', `${s} ${s} ${s}`);
-                                    }
-                                }}
-                                className="w-full accent-primary cursor-pointer"
-                            />
-
-                            <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
-                                <span>0.10× (Tiny)</span>
-                                <span>1.00× (Normal)</span>
-                                <span>3.00× (XL)</span>
-                            </div>
-
-                            {/* Physical dimension readout */}
-                            <div className="bg-secondary/40 rounded-xl p-4 border border-border/50 space-y-0">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-3">
-                                    Estimated Real-World Dimensions
-                                    {!dimsReady && (
-                                        <span className="ml-2 font-normal normal-case text-amber-600">
-                                            (load the model in the preview to calculate)
-                                        </span>
-                                    )}
+                                <p className="text-[11px] text-muted-foreground">
+                                    Set the real-world diameter in centimetres. VisionDine calculates the precise model scale for AR.
                                 </p>
+                            </div>
+
+                            {/* Centimetre Stepper & Direct Input */}
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const next = Math.max(3.0, Number((targetDiameterCm - 0.5).toFixed(1)));
+                                        setTargetDiameterCm(next);
+                                        setRelativeScaleSlider(Number((next / 20.0).toFixed(2)));
+                                    }}
+                                    className="px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground text-xs font-bold rounded-xl border border-border/60 active:scale-95 transition-all"
+                                >
+                                    -0.5 cm
+                                </button>
+                                <div className="relative flex-1">
+                                    <input
+                                        type="number"
+                                        min="3.0"
+                                        max="120.0"
+                                        step="0.5"
+                                        value={targetDiameterCm}
+                                        onChange={(e) => {
+                                            const val = parseFloat(e.target.value);
+                                            if (!isNaN(val) && val > 0) {
+                                                setTargetDiameterCm(val);
+                                                setRelativeScaleSlider(Number((val / 20.0).toFixed(2)));
+                                            }
+                                        }}
+                                        className="w-full px-3 py-2 bg-background border border-input rounded-xl text-center font-mono font-bold text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono pointer-events-none">
+                                        cm
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const next = Math.min(120.0, Number((targetDiameterCm + 0.5).toFixed(1)));
+                                        setTargetDiameterCm(next);
+                                        setRelativeScaleSlider(Number((next / 20.0).toFixed(2)));
+                                    }}
+                                    className="px-3 py-2 bg-secondary hover:bg-secondary/80 text-foreground text-xs font-bold rounded-xl border border-border/60 active:scale-95 transition-all"
+                                >
+                                    +0.5 cm
+                                </button>
+                            </div>
+
+                            {/* Quick Dish Size Presets */}
+                            <div>
+                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-2">
+                                    Quick Presets
+                                </label>
+                                <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                                    {[
+                                        { label: 'Cup / Shot', cm: 6.0 },
+                                        { label: 'Small Bowl', cm: 9.0 },
+                                        { label: 'Side / Salad', cm: 15.0 },
+                                        { label: 'Standard (20cm)', cm: 20.0 },
+                                        { label: 'Dinner Plate', cm: 26.0 },
+                                    ].map((preset) => (
+                                        <button
+                                            key={preset.cm}
+                                            type="button"
+                                            onClick={() => {
+                                                setTargetDiameterCm(preset.cm);
+                                                setRelativeScaleSlider(Number((preset.cm / 20.0).toFixed(2)));
+                                            }}
+                                            className={`py-1.5 px-2 rounded-lg text-[10px] font-medium border text-center transition-all ${
+                                                Math.abs(targetDiameterCm - preset.cm) < 0.1
+                                                    ? 'bg-primary text-primary-foreground border-primary shadow-sm font-bold'
+                                                    : 'bg-secondary/60 hover:bg-secondary text-foreground border-border/50'
+                                            }`}
+                                        >
+                                            {preset.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Relative Multiplier Slider (Synchronized) */}
+                            <div className="space-y-2 pt-1">
+                                <div className="flex justify-between items-center text-xs">
+                                    <span className="text-[11px] text-muted-foreground font-medium">Relative Scale Slider</span>
+                                    <span className="font-mono text-xs font-bold text-foreground">
+                                        {relativeScaleSlider.toFixed(2)}×
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0.1"
+                                    max="3.0"
+                                    step="0.05"
+                                    value={relativeScaleSlider}
+                                    onChange={(e) => {
+                                        const s = parseFloat(e.target.value);
+                                        setRelativeScaleSlider(s);
+                                        setTargetDiameterCm(Number((s * 20.0).toFixed(1)));
+                                    }}
+                                    className="w-full accent-primary cursor-pointer"
+                                />
+                                <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
+                                    <span>0.10× (2 cm)</span>
+                                    <span>1.00× (20 cm)</span>
+                                    <span>3.00× (60 cm)</span>
+                                </div>
+                            </div>
+
+                            {/* Calculated Real-World Placed Dimensions */}
+                            <div className="bg-secondary/40 rounded-xl p-4 border border-border/50 space-y-0">
+                                <div className="flex justify-between items-center mb-3">
+                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        Configured AR Physical Dimensions
+                                    </p>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                                        calibrationFactor === 1.0
+                                            ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                                            : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                                    }`}>
+                                        {calibrationFactor === 1.0 ? 'Estimated · Uncalibrated' : `Calibrated (${calibrationFactor.toFixed(2)}×)`}
+                                    </span>
+                                </div>
                                 <div className="space-y-0 divide-y divide-border/40">
                                     {([
-                                        { label: 'Width', icon: 'open_in_full', axis: 'x' as const },
-                                        { label: 'Height', icon: 'height', axis: 'y' as const },
-                                        { label: 'Depth', icon: 'settings_ethernet', axis: 'z' as const },
-                                    ] as { label: string; icon: string; axis: 'x' | 'y' | 'z' }[]).map(({ label, icon, axis }) => (
-                                        <div key={axis} className="flex justify-between items-center py-2.5">
+                                        { label: 'Width (Side-to-Side)', icon: 'open_in_full', val: physicalDims.width },
+                                        { label: 'Height (Thickness)', icon: 'height', val: physicalDims.height },
+                                        { label: 'Depth (Front-to-Back)', icon: 'settings_ethernet', val: physicalDims.depth },
+                                    ] as { label: string; icon: string; val: number }[]).map(({ label, icon, val }) => (
+                                        <div key={label} className="flex justify-between items-center py-2.5">
                                             <span className="text-xs text-muted-foreground flex items-center gap-1.5">
                                                 <span className="material-icons-round text-xs">{icon}</span>
                                                 {label}
                                             </span>
                                             <span className="text-xs font-mono font-bold text-foreground">
-                                                {dimsReady
-                                                    ? `${(baseDim[axis] * currentScale * autoScaleFactor * 100).toFixed(1)} cm`
-                                                    : '— cm'
-                                                }
+                                                {dimsReady ? `${val.toFixed(1)} cm` : '— cm'}
                                             </span>
                                         </div>
                                     ))}
                                 </div>
-                                <p className="text-[10px] text-muted-foreground mt-3 pt-2 border-t border-border/30">
-                                    <strong>Scale factor</strong> applied to model: <span className="font-mono">{(currentScale * autoScaleFactor).toFixed(4)}</span>
-                                    {' '}&nbsp;·&nbsp; Stored as <code className="bg-secondary px-1 rounded">ar_scale</code> in Supabase.
-                                </p>
+                                <div className="mt-3 pt-2.5 border-t border-border/30 flex justify-between items-center text-[11px] text-muted-foreground">
+                                    <span>Model AR Scale (<code className="bg-secondary px-1 rounded text-[10px]">ar_scale</code>):</span>
+                                    <span className="font-mono font-bold text-foreground">{currentArScale.toFixed(6)}</span>
+                                </div>
+                            </div>
+
+                            {/* Calibration Panel (Collapsible) */}
+                            <div className="border border-border/50 rounded-xl p-3 bg-background/50 space-y-2">
+                                <div className="flex justify-between items-center">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowCalibration(!showCalibration)}
+                                        className="text-xs font-bold text-foreground hover:text-primary flex items-center gap-1.5 transition-colors"
+                                    >
+                                        <span className="material-icons-round text-xs">
+                                            {showCalibration ? 'expand_less' : 'expand_more'}
+                                        </span>
+                                        Asset Calibration Settings
+                                    </button>
+                                    <span className="text-[10px] text-muted-foreground font-mono">
+                                        Raw GLB: {(rawMaxMeters * 100).toFixed(1)} cm
+                                    </span>
+                                </div>
+                                {showCalibration && (
+                                    <div className="pt-2 border-t border-border/40 space-y-3 text-xs">
+                                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                            If your 3D model was authored with non-standard units (e.g., radius instead of diameter, or photogrammetry scans with extra boundary), calibrate the reference conversion factor below:
+                                        </p>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setCalibrationFactor(1.0)}
+                                                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border ${
+                                                    calibrationFactor === 1.0
+                                                        ? 'bg-primary text-primary-foreground border-primary font-bold'
+                                                        : 'bg-secondary text-foreground border-border/60'
+                                                }`}
+                                            >
+                                                1.0× (Standard Meter GLB)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setCalibrationFactor(0.5)}
+                                                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border ${
+                                                    calibrationFactor === 0.5
+                                                        ? 'bg-primary text-primary-foreground border-primary font-bold'
+                                                        : 'bg-secondary text-foreground border-border/60'
+                                                }`}
+                                            >
+                                                0.5× (Half-scale Scan)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setCalibrationFactor(2.0)}
+                                                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-medium border ${
+                                                    calibrationFactor === 2.0
+                                                        ? 'bg-primary text-primary-foreground border-primary font-bold'
+                                                        : 'bg-secondary text-foreground border-border/60'
+                                                }`}
+                                            >
+                                                2.0× (Double-scale Scan)
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -930,6 +1130,23 @@ export default function ARDemoAdminPage() {
                                 </div>
                             ) : null}
 
+                            {/* Reset View Button */}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const v = modelViewerRef.current;
+                                    if (v) {
+                                        v.cameraOrbit = '35deg 55deg auto';
+                                        if (typeof v.updateFraming === 'function') v.updateFraming();
+                                    }
+                                }}
+                                className="absolute bottom-3 right-3 z-20 bg-background/80 hover:bg-background backdrop-blur-sm text-foreground text-[11px] px-2.5 py-1 rounded-lg border border-border/60 shadow-sm flex items-center gap-1 transition-all"
+                                title="Reset View Framing"
+                            >
+                                <span className="material-icons-round text-xs">center_focus_strong</span>
+                                Reset View
+                            </button>
+
                             {/* @ts-ignore - Custom Web Component */}
                             <model-viewer
                                 ref={modelViewerRef}
@@ -937,14 +1154,13 @@ export default function ARDemoAdminPage() {
                                 alt={dishName || '3D Demo Dish'}
                                 camera-controls
                                 auto-rotate={autoRotate ? true : undefined}
-                                rotation-per-second="30deg"
+                                rotation-per-second="25deg"
                                 shadow-intensity="1"
                                 exposure="1"
                                 bounds="tight"
-                                scale={dimsReady
-                                    ? `${(currentScale * autoScaleFactor).toFixed(6)} ${(currentScale * autoScaleFactor).toFixed(6)} ${(currentScale * autoScaleFactor).toFixed(6)}`
-                                    : undefined
-                                }
+                                camera-orbit="35deg 55deg auto"
+                                field-of-view="32deg"
+                                camera-target="auto auto auto"
                                 style={{
                                     width: '100%',
                                     height: '100%',

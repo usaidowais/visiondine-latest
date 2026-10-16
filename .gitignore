@@ -49,5 +49,6 @@ v2_original/
 
 # scratch / test scripts (development only)
 scratch/
-*.test.mjs
-*.test.cjs
+/*.test.mjs
+/*.test.cjs
+!tests/

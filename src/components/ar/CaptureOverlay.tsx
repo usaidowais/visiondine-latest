@@ -122,6 +122,10 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
       e.preventDefault();
       if (isCapturing) return;
 
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {}
+
       isHoldingRef.current = true;
 
       // Start a timer — if they hold past the threshold, start recording
@@ -137,6 +141,9 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
       isHoldingRef.current = false;
 
       if (holdTimerRef.current) {
@@ -155,9 +162,11 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
     [isRecording, stopRecording, handlePhotoCapture]
   );
 
-  const handlePointerLeave = useCallback(
+  const handlePointerCancel = useCallback(
     (e: React.PointerEvent) => {
-      e.preventDefault();
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
       isHoldingRef.current = false;
 
       if (holdTimerRef.current) {
@@ -206,18 +215,18 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
         </div>
       )}
 
-      {/* ── Shutter Button Container (positioned above the info card) ── */}
+      {/* ── Shutter Button Container (positioned above bottom safe area) ── */}
       <div
-        className="absolute bottom-28 left-0 right-0 z-[999] flex flex-col items-center pointer-events-none"
+        className="absolute bottom-8 left-0 right-0 z-[999] flex flex-col items-center pointer-events-none"
         id="capture-overlay"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}
       >
         {/* Shutter Button — tap for photo, hold for video */}
         <button
           id="ar-capture-button"
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerLeave}
+          onPointerCancel={handlePointerCancel}
           onContextMenu={(e) => e.preventDefault()}
           disabled={isCapturing}
           className="pointer-events-auto group relative flex items-center justify-center transition-all duration-200 disabled:opacity-50 touch-none"

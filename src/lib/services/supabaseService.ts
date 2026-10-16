@@ -489,7 +489,9 @@ export const supabaseService = {
                     category: data.category || defaultDemoDish.category,
                     image_url: data.image_url || defaultDemoDish.image_url,
                     glb_url: data.glb_url || defaultDemoDish.glb_url,
-                    ar_scale: typeof data.ar_scale === 'number' ? data.ar_scale : defaultDemoDish.ar_scale
+                    ar_scale: typeof data.ar_scale === 'number' ? data.ar_scale : defaultDemoDish.ar_scale,
+                    calibration_factor: typeof data.calibration_factor === 'number' ? data.calibration_factor : 1.0,
+                    target_dimensions_cm: data.target_dimensions_cm || undefined
                 };
 
                 const idx = memoryDishes.findIndex(d => d.id === 'wood-fired-pizza');
@@ -527,7 +529,9 @@ export const supabaseService = {
                                 category: parsed.category || defaultDemoDish.category,
                                 image_url: parsed.image_url || defaultDemoDish.image_url,
                                 glb_url: parsed.glb_url || defaultDemoDish.glb_url,
-                                ar_scale: typeof parsed.ar_scale === 'number' ? parsed.ar_scale : defaultDemoDish.ar_scale
+                                ar_scale: typeof parsed.ar_scale === 'number' ? parsed.ar_scale : defaultDemoDish.ar_scale,
+                                calibration_factor: typeof parsed.calibration_factor === 'number' ? parsed.calibration_factor : 1.0,
+                                target_dimensions_cm: parsed.target_dimensions_cm || undefined
                             };
 
                             const idx = memoryDishes.findIndex(d => d.id === 'wood-fired-pizza');
