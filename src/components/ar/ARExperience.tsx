@@ -46,7 +46,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     const [arState, setArState] = useState<ARState>('INITIALIZING');
     const [loadingProgress, setLoadingProgress] = useState<number>(0);
     const [hasError, setHasError] = useState(false);
-    const [isInARSession, setIsInARSession] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
     const [cameraInterrupted, setCameraInterrupted] = useState(false);
     const modelViewerRef = useRef<HTMLElement>(null);
@@ -95,8 +94,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
 
     // Health check and recovery after Android share sheet or visibility change
     const checkAndRestoreCamera = useCallback(async () => {
-        if (isInARSession) return;
-
         const video = backgroundVideoRef.current;
         if (!video) return;
 
@@ -124,7 +121,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         // Stream is dead or was terminated by Android while in background
         console.log('[ARExperience] Camera stream inactive. Reacquiring fresh stream...');
         await startBackgroundCamera(true);
-    }, [isInARSession, startBackgroundCamera]);
+    }, [startBackgroundCamera]);
 
     // Mount: start background camera feed
     useEffect(() => {
@@ -281,40 +278,14 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         setArState(subState);
     }, []);
 
-    // ── AR Session lifecycle (Hardware Handshake) ──────────────
+    // Sync autoRotate property on model-viewer element whenever isReadyToPlace changes
+    const isReadyToPlace = arState === 'READY_TO_PLACE';
     useEffect(() => {
-        const viewer = modelViewerRef.current;
-        if (!viewer) return;
-
-        const handleARStatus = (event: any) => {
-            const status = event?.detail?.status;
-            console.log('[ARExperience] ar-status changed:', status);
-
-            if (status === 'session-started') {
-                // Native AR is taking over — stop ALL camera tracks from
-                // our background video feed to free the hardware for ARCore/ARKit.
-                console.log('[ARExperience] Native AR session started. Releasing camera hardware.');
-                stopBackgroundCamera();
-                releaseCamera();
-                setIsInARSession(true);
-            } else if (status === 'not-presenting') {
-                // User exited native AR — back to 3D web view.
-                // Restart the background camera feed for our composite capture.
-                console.log('[ARExperience] AR session ended. Re-acquiring camera.');
-                setIsInARSession(false);
-                startBackgroundCamera(true);
-                prewarmCamera();
-                // Model was already placed in native AR; return to PLACED state in web view
-                setArState('PLACED');
-            }
-        };
-
-        viewer.addEventListener('ar-status', handleARStatus);
-
-        return () => {
-            viewer.removeEventListener('ar-status', handleARStatus);
-        };
-    }, [startBackgroundCamera, stopBackgroundCamera]);
+        const viewer = modelViewerRef.current as any;
+        if (viewer) {
+            viewer.autoRotate = isReadyToPlace;
+        }
+    }, [isReadyToPlace]);
 
     if (!isValidUrl) {
         return (
@@ -336,7 +307,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     }
 
     const isInitializing = arState === 'INITIALIZING';
-    const isReadyToPlace = arState === 'READY_TO_PLACE';
     const isPlacing = arState === 'PLACING';
     const isPlaced = arState === 'PLACED' || arState === 'CAPTURING_PHOTO' || arState === 'RECORDING_VIDEO';
 
@@ -352,7 +322,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 muted
                 onPause={() => {
                     // If video pauses while page is active, automatically attempt to resume
-                    if (document.visibilityState === 'visible' && !isInARSession) {
+                    if (document.visibilityState === 'visible') {
                         backgroundVideoRef.current?.play().catch(() => {});
                     }
                 }}
@@ -365,7 +335,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             />
 
             {/* Camera unavailable fallback gradient — only shows if no camera feed */}
-            {!cameraReady && !isInARSession && (
+            {!cameraReady && (
                 <div
                     className="absolute inset-0 z-[2]"
                     style={{
@@ -386,28 +356,26 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             </button>
 
             {/* Dish Info Header Badge (Top Center, away from bottom camera controls) */}
-            {!isInARSession && (
-                <div
-                    className="absolute top-4 left-1/2 -translate-x-1/2 z-[80] bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-140px)] shadow-xl pointer-events-none"
-                    style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
+            <div
+                className="absolute top-4 left-1/2 -translate-x-1/2 z-[80] bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-140px)] shadow-xl pointer-events-none"
+                style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
+            >
+                <span className="text-white text-xs font-bold truncate">{dishName}</span>
+                <span className="text-white/40 text-[10px]">·</span>
+                <span className="text-primary text-xs font-mono font-bold shrink-0">
+                    {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
+                </span>
+                {/* Status Pill */}
+                <span
+                    className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                        isPlaced
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    }`}
                 >
-                    <span className="text-white text-xs font-bold truncate">{dishName}</span>
-                    <span className="text-white/40 text-[10px]">·</span>
-                    <span className="text-primary text-xs font-mono font-bold shrink-0">
-                        {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
-                    </span>
-                    {/* Status Pill */}
-                    <span
-                        className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                            isPlaced
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                        }`}
-                    >
-                        {isPlaced ? 'Placed in AR' : 'Preview'}
-                    </span>
-                </div>
-            )}
+                    {isPlaced ? 'Placed in AR' : 'Preview'}
+                </span>
+            </div>
 
             {/* ─── STAGE: INITIALIZING ────────────────────────────────
                  Shows loading spinner while model GLB or camera streams */}
@@ -445,7 +413,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
 
             {/* ─── Camera Interruption Recovery Overlay ──────────────
                  Self-healing action if OS halts camera while in background */}
-            {cameraInterrupted && !isInARSession && (
+            {cameraInterrupted && (
                 <div className="absolute inset-0 z-[85] bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-fade-in">
                     <div className="w-16 h-16 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mb-4">
                         <span className="material-icons-round text-3xl text-amber-400">videocam_off</span>
@@ -466,7 +434,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
 
             {/* ─── STAGE: READY_TO_PLACE (Floor Reticle Guide) ─────────
                  Indicates the flat surface area where the dish will anchor */}
-            {isReadyToPlace && !isInARSession && (
+            {isReadyToPlace && (
                 <div className="absolute inset-0 z-[15] pointer-events-none flex flex-col items-center justify-center">
                     <div className="w-64 h-28 rounded-[100%] border-2 border-dashed border-white/70 bg-white/5 animate-pulse flex flex-col items-center justify-center transform translate-y-20 shadow-[0_0_30px_rgba(255,255,255,0.25)]">
                         <div className="w-3 h-3 rounded-full bg-white/90 mb-1" />
@@ -497,15 +465,11 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                     ios-src={iosSrc || modelUrl}
                     alt={alt}
                     scale={`${Number(arScale) || 1.0} ${Number(arScale) || 1.0} ${Number(arScale) || 1.0}`}
-                    ar
-                    ar-modes="webxr scene-viewer quick-look"
                     camera-controls
                     auto-rotate={isReadyToPlace}
                     rotation-per-second="25deg"
                     shadow-intensity={isPlaced ? '1.8' : '0.4'}
                     exposure="1"
-                    ar-scale="fixed"
-                    ar-placement="floor"
                     touch-action="pan-y"
                     style={{
                         width: '100%',
@@ -516,25 +480,12 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                     loading="eager"
                     reveal="auto"
                     environment-image="neutral"
-                >
-                    {/* Custom AR Button: Sleek unobtrusive Surface AR pill at top-left for Google Scene Viewer */}
-                    <button 
-                        slot="ar-button" 
-                        className="absolute top-4 left-4 z-[70] bg-black/60 hover:bg-black/80 backdrop-blur-md text-white text-xs font-semibold px-3.5 py-2 rounded-full border border-white/20 flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
-                        aria-label="View anchored on real-world flat surface using ARCore"
-                        style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
-                    >
-                        <span className="material-icons-round text-sm text-primary">view_in_ar</span>
-                        <span>Surface AR</span>
-                    </button>
-
-                    {/* @ts-ignore */}
-                </model-viewer>
+                />
             </div>
 
             {/* ─── STAGE: READY_TO_PLACE & PLACING Controls ─────────────
                  Visible strictly before placement. The capture shutter is hidden. */}
-            {!isInARSession && (isReadyToPlace || isPlacing) && (
+            {(isReadyToPlace || isPlacing) && (
                 <div
                     className="absolute bottom-16 left-0 right-0 z-[80] flex flex-col items-center pointer-events-none px-6"
                     style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 16px) + 0.5rem)' }}
@@ -581,7 +532,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             {/* ─── STAGE: PLACED Controls (Capture Overlay) ────────────
                  Visible strictly AFTER confirmed placement.
                  Includes photo shutter, hold-for-video, and Reposition Dish option. */}
-            {!isInARSession && isPlaced && (
+            {isPlaced && (
                 <CaptureOverlay
                     modelViewerRef={modelViewerRef}
                     dishName={dishName}
