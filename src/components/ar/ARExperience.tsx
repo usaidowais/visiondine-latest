@@ -32,8 +32,13 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     onClose
 }) => {
     const [isLoading, setIsLoading] = useState(true);
+    const [loadingProgress, setLoadingProgress] = useState<number>(0);
     const [hasError, setHasError] = useState(false);
     const [isInARSession, setIsInARSession] = useState(false);
+    // The first screen is only a placement prompt. Capture controls become
+    // available after the visitor has chosen to place the model. Native AR
+    // still hides them because the native viewer owns the camera.
+    const [hasStartedPlacement, setHasStartedPlacement] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
     const modelViewerRef = useRef<HTMLElement>(null);
     const backgroundVideoRef = useRef<HTMLVideoElement>(null);
@@ -90,6 +95,12 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         const viewer = modelViewerRef.current;
         if (!viewer) return;
 
+        // Check if already loaded (cached or fast mount)
+        if ((viewer as any).loaded) {
+            setIsLoading(false);
+            return;
+        }
+
         // 1. Success Handler
         const handleLoad = () => {
             console.log("Model Loaded Successfully! (Event Listener)");
@@ -103,22 +114,34 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             setIsLoading(false);
         };
 
-        // 3. Attach Listeners Manually (Bulletproof)
+        // 3. Progress Handler (for slow cellular/network connections)
+        const handleProgress = (event: any) => {
+            const progress = event?.detail?.totalProgress;
+            if (typeof progress === 'number') {
+                setLoadingProgress(progress);
+                if (progress >= 1) {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        // 4. Attach Listeners Manually
         viewer.addEventListener('load', handleLoad);
         viewer.addEventListener('error', handleError);
+        viewer.addEventListener('progress', handleProgress);
 
-        // 4. Safety Timeout (Fallback)
-        // If the model loads super fast (cached) or event is missed, force hide loader after 5 seconds.
+        // 5. Extended Safety Timeout for slow 3G/4G connections (30 seconds)
         const safetyTimer = setTimeout(() => {
-            if (isLoading) {
-                console.warn("Safety timer triggered: Forcing loader hide.");
+            if ((viewer as any).loaded) {
+                console.warn("Safety timer check: Model already loaded, hiding loader.");
                 setIsLoading(false);
             }
-        }, 5000);
+        }, 30000);
 
         return () => {
             viewer.removeEventListener('load', handleLoad);
             viewer.removeEventListener('error', handleError);
+            viewer.removeEventListener('progress', handleProgress);
             clearTimeout(safetyTimer);
         };
     }, []); // Run once on mount
@@ -168,17 +191,17 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     if (!isValidUrl) {
         return (
             <div className="absolute inset-0 z-50 bg-black/90 flex flex-col items-center justify-center text-white p-4">
-                <div className="text-red-500 font-bold text-xl mb-2">NO 3D FILE FOUND</div>
-                <p className="text-center text-sm">
-                    The database `model_url` is empty for this dish.
+                <div className="text-red-500 font-bold text-xl mb-2">3D MODEL NOT CONFIGURED</div>
+                <p className="text-center text-sm text-white/80 max-w-sm mb-4">
+                    No valid 3D (.glb) model URL has been configured for this dish.
                     <br />
-                    Please go to the Dish Editor and upload a .glb file.
+                    Please visit the AR Demo section in the admin panel to upload or assign a GLB file.
                 </p>
                 <button
                     onClick={onClose}
-                    className="mt-4 px-4 py-2 bg-white text-black rounded font-bold"
+                    className="px-6 py-2.5 bg-white text-black rounded-xl font-bold hover:bg-gray-100 transition-colors"
                 >
-                    Close
+                    Return to Dish
                 </button>
             </div>
         );
@@ -221,24 +244,34 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 ✕
             </button>
 
-            {/* Loading Indicator - Only shows while loading */}
+            {/* Loading Indicator - Shows while loading with progress tracking for slow connections */}
             {isLoading && !hasError && (
-                <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="w-10 h-10 border-3 border-white/30 border-t-white rounded-full animate-spin mb-4"></div>
-                    <span className="text-white/70 text-sm">Loading 3D Model...</span>
+                <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
+                    <div className="w-10 h-10 border-2 border-white/20 border-t-white rounded-full animate-spin mb-3"></div>
+                    <span className="text-white text-sm font-medium tracking-wide">
+                        {loadingProgress > 0 && loadingProgress < 1
+                            ? `Loading 3D Model (${Math.round(loadingProgress * 100)}%)...`
+                            : 'Loading 3D Model...'}
+                    </span>
+                    <span className="text-white/60 text-xs mt-1">Preparing AR experience</span>
                 </div>
             )}
 
             {/* Error Overlay */}
             {hasError && (
-                <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/90 text-center p-4">
-                    <div className="text-red-500 font-bold text-xl mb-2">Failed to Load Model</div>
-                    <p className="text-white/60 text-sm">Check CORS settings or file URL.</p>
+                <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/95 text-center p-6">
+                    <div className="w-14 h-14 rounded-full bg-red-500/20 text-red-500 flex items-center justify-center mb-4">
+                        <span className="material-icons-round text-3xl">error_outline</span>
+                    </div>
+                    <div className="text-white font-bold text-xl mb-2">3D Model Failed to Load</div>
+                    <p className="text-white/70 text-sm max-w-xs mb-6">
+                        Unable to load the 3D model. Please verify the .glb asset URL, CORS headers, or network connection.
+                    </p>
                     <button
                         onClick={onClose}
-                        className="mt-4 px-4 py-2 bg-white text-black rounded font-bold"
+                        className="px-6 py-2.5 bg-white text-black rounded-xl font-bold hover:bg-gray-100 transition-all shadow-lg"
                     >
-                        Close
+                        Return to Dish
                     </button>
                 </div>
             )}
@@ -294,7 +327,8 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 {/* Custom AR Button (Strictly Required for iOS/Android Native AR Launch) */}
                 <button 
                     slot="ar-button" 
-                    className="absolute bottom-44 left-1/2 transform -translate-x-1/2 bg-white text-black px-6 py-3 rounded-full font-bold shadow-lg z-[80]"
+                    onClick={() => setHasStartedPlacement(true)}
+                    className="absolute bottom-52 left-1/2 transform -translate-x-1/2 bg-white text-black px-6 py-3 rounded-full font-bold shadow-lg z-[80] active:scale-95 transition-transform"
                 >
                     Place in your space
                 </button>
@@ -322,7 +356,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
               3) Applies the VisionDine watermark + dish name
               4) Exports as high-res PNG (photo) or MP4/WebM (video)
             */}
-            {!isInARSession && (
+            {!isInARSession && hasStartedPlacement && (
                 <CaptureOverlay
                     modelViewerRef={modelViewerRef}
                     dishName={dishName}

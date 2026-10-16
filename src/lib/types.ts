@@ -42,6 +42,7 @@ export interface Dish {
   name: string;
   description: string;
   price: number;
+  currency?: string;
   image_url: string;
   glb_url?: string; // For Android/Web
   usdz_url?: string; // For iOS AR Quick Look

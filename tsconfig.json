@@ -38,6 +38,11 @@
   ],
   "exclude": [
     "node_modules",
-    "_legacy_backup"
+    "_legacy_backup",
+    "v2_original",
+    "dist",
+    "tests",
+    "src/main.tsx",
+    "vite.config.ts"
   ]
 }

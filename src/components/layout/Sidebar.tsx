@@ -41,10 +41,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onLogout, isOpen, onClose }) =
             >
                 <div className="px-6 pb-6 border-b border-border/50 flex items-center gap-3">
                     <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-primary-foreground font-bold shadow-lg shadow-primary/20">
-                        SA
+                        VD
                     </div>
                     <div>
-                        <h1 className="font-bold text-foreground text-lg leading-tight tracking-tight">WebAR SaaS</h1>
+                        <h1 className="font-bold text-foreground text-lg leading-tight tracking-tight">VisionDine 2.0</h1>
                         <p className="text-xs text-muted-foreground font-medium">Super Admin</p>
                     </div>
                     <button className="md:hidden ml-auto text-muted-foreground hover:text-foreground transition-colors" onClick={onClose}>
@@ -73,6 +73,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onLogout, isOpen, onClose }) =
                         label="Analytics"
                         active={pathname.startsWith('/admin/analytics')}
                         onClick={() => handleNavigation('/admin/analytics')}
+                    />
+
+                    <NavItem
+                        icon="view_in_ar"
+                        label="AR Demo"
+                        active={pathname.startsWith('/admin/ar-demo')}
+                        onClick={() => handleNavigation('/admin/ar-demo')}
                     />
 
                     <div className="px-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 mt-6">System</div>

@@ -63,6 +63,7 @@ export default function TenantMenuManager() {
         dish.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         dish.category?.toLowerCase().includes(searchTerm.toLowerCase())
     );
+    const demoDish = dishes.find(dish => dish.id === 'wood-fired-pizza');
 
     return (
         <div className="p-8 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500">
@@ -121,10 +122,18 @@ export default function TenantMenuManager() {
                         <p className="text-muted-foreground text-sm">Manage dish details and AR models</p>
                     </div>
 
-                    <Button onClick={() => router.push(`/admin/restaurants/${id}/menu/new`)} className="bg-[#0A1929] hover:bg-[#122840] text-white gap-2 shadow-lg shadow-blue-900/20">
-                        <span className="material-icons-round">add</span>
-                        Add Dish
-                    </Button>
+                    <div className="flex flex-wrap gap-3">
+                        {demoDish && (
+                            <Button variant="outline" onClick={() => router.push(`/admin/restaurants/${id}/menu/${demoDish.id}`)} className="gap-2">
+                                <span className="material-icons-round">view_in_ar</span>
+                                Configure Demo Dish
+                            </Button>
+                        )}
+                        <Button onClick={() => router.push(`/admin/restaurants/${id}/menu/new`)} className="bg-[#0A1929] hover:bg-[#122840] text-white gap-2 shadow-lg shadow-blue-900/20">
+                            <span className="material-icons-round">add</span>
+                            Add Dish
+                        </Button>
+                    </div>
                 </div>
 
                 {/* Filters */}
@@ -189,7 +198,7 @@ export default function TenantMenuManager() {
                                                     <img src={dish.image_url} alt={dish.name} className="w-full h-full object-cover" />
                                                 </div>
                                                 <div>
-                                                    <p className="font-bold text-foreground text-sm">{dish.name}</p>
+                                                    <p className="font-bold text-foreground text-sm">{dish.name} {dish.id === 'wood-fired-pizza' && <span className="ml-1 text-[10px] uppercase tracking-wide text-primary">Demo</span>}</p>
                                                     <p className="text-xs text-muted-foreground line-clamp-1 max-w-[200px]">{dish.description}</p>
                                                 </div>
                                             </div>
@@ -251,7 +260,7 @@ export default function TenantMenuManager() {
                         
                         <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-inner mb-6 flex justify-center items-center h-64">
                             <img 
-                                src={`https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(typeof window !== 'undefined' ? `${window.location.origin}/menu/${restaurant.slug || restaurant.id}?dish=${selectedDishQR.id}` : '')}`} 
+                                src={`https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(typeof window !== 'undefined' ? `${window.location.origin}/menu/${restaurant.slug || restaurant.id}/dish/${selectedDishQR.id}` : '')}`} 
                                 alt={`${selectedDishQR.name} QR Code`}
                                 className="w-full h-full object-contain"
                             />
@@ -265,7 +274,7 @@ export default function TenantMenuManager() {
                             <Button 
                                 className="w-full bg-[#0A1929] hover:bg-[#122840] text-white gap-2 flex items-center justify-center"
                                 onClick={() => downloadQR(
-                                    `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(typeof window !== 'undefined' ? `${window.location.origin}/menu/${restaurant.slug || restaurant.id}?dish=${selectedDishQR.id}` : '')}`,
+                                    `https://api.qrserver.com/v1/create-qr-code/?size=512x512&data=${encodeURIComponent(typeof window !== 'undefined' ? `${window.location.origin}/menu/${restaurant.slug || restaurant.id}/dish/${selectedDishQR.id}` : '')}`,
                                     `${selectedDishQR.name.replace(/\s+/g, '-')}-AR-QR.png`
                                 )}
                             >

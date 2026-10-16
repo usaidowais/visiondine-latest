@@ -3,8 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { useRouter, useParams } from 'next/navigation';
-import { supabaseService, supabase } from '@/lib/services/supabaseService';
-import { Restaurant, Dish } from '@/lib/types';
+import { supabaseService } from '@/lib/services/supabaseService';
 
 export default function EditDishPage() {
     const router = useRouter();
@@ -17,6 +16,7 @@ export default function EditDishPage() {
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
     // Restaurant State
     const [restaurantId, setRestaurantId] = useState<string | null>(null);
@@ -88,19 +88,11 @@ export default function EditDishPage() {
                 if (foundRest) {
                     setRestaurantId(foundRest.id);
 
-                    // 2. Fetch Dish Details directly from Supabase since we don't have getDishById yet exposed, 
-                    // or assume getRestaurantDishes returns it. But better to fetch single.
-                    // Actually supabaseService doesn't have getDish(id), so we use supabase client directly or add it.
-                    // For now, let's query directly for speed or use filters on getRestaurantDishes? 
-                    // Direct query is better.
+                    // Use the application data service so the editor works with
+                    // the same Supabase-or-demo fallback used by the public route.
+                    const dish = await supabaseService.getDishById(dishIdParam);
 
-                    const { data: dish, error } = await supabase
-                        .from('dishes')
-                        .select('*')
-                        .eq('id', dishIdParam)
-                        .single();
-
-                    if (error || !dish) {
+                    if (!dish || dish.restaurant_id !== foundRest.id) {
                         setUploadError('Dish not found.');
                     } else {
                         // Populate Form
@@ -187,13 +179,16 @@ export default function EditDishPage() {
         if (!formData.name || !formData.price || !formData.category || !restaurantId) return;
         setIsLoading(true);
         setUploadError(null);
+        setSaveNotice(null);
 
         try {
             // 1. Upload New Image if selected
             let uploadedImageUrl = imagePreview; // Default to existing
+            let mediaPersisted = true;
             if (imageFile) {
-                const url = await supabaseService.uploadImage('media', imageFile);
-                if (url) uploadedImageUrl = url;
+                const upload = await supabaseService.uploadImageWithStatus('media', imageFile);
+                if (upload.url) uploadedImageUrl = upload.url;
+                mediaPersisted = upload.persisted;
             }
 
             // 2. Upload New AR Model (.glb file)
@@ -201,15 +196,15 @@ export default function EditDishPage() {
 
             let finalArUrl = currentArUrl;
             if (arModelFile) {
-                // Try real upload
-                const url = await supabaseService.uploadImage('media', arModelFile);
-                if (url) finalArUrl = url;
+                const upload = await supabaseService.uploadImageWithStatus('media', arModelFile);
+                if (upload.url) finalArUrl = upload.url;
+                mediaPersisted = mediaPersisted && upload.persisted;
             }
 
             // 3. Update Dish
             const trueScale = currentScale * autoScaleFactor;
             
-            await supabaseService.updateDish(dishIdParam, {
+            const result = await supabaseService.updateDishWithStatus(dishIdParam, {
                 name: formData.name,
                 description: formData.description,
                 price: parseFloat(formData.price),
@@ -218,6 +213,18 @@ export default function EditDishPage() {
                 glb_url: finalArUrl || undefined,
                 ar_scale: trueScale
             });
+
+            if (!result.dish) {
+                throw new Error('The dish could not be updated.');
+            }
+
+            if (!result.persisted || !mediaPersisted) {
+                setSaveNotice(!result.persisted
+                    ? 'Saved for this browser session only. Supabase was unavailable, so this demo change will not survive a refresh or appear on the public deployment.'
+                    : 'The dish details were saved, but the selected file could not be uploaded. Its preview is available only in this browser session.');
+                setIsLoading(false);
+                return;
+            }
 
             // Brief delay for UX then redirect
             setTimeout(() => {
@@ -258,6 +265,13 @@ export default function EditDishPage() {
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center gap-2 mb-4">
                     <span className="material-icons-round text-red-500">error</span>
                     <span className="text-sm font-medium">{uploadError}</span>
+                </div>
+            )}
+
+            {saveNotice && (
+                <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center gap-2 mb-4">
+                    <span className="material-icons-round text-amber-600">info</span>
+                    <span className="text-sm font-medium">{saveNotice}</span>
                 </div>
             )}
 

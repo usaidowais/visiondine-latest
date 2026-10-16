@@ -350,7 +350,7 @@ export default function TenantSettingsPage() {
                     <div className="space-y-6">
                         <div>
                             <h2 className="text-xl font-bold text-foreground">Color Palette</h2>
-                            <p className="text-muted-foreground">Customize the full color scheme of your WebAR interface.</p>
+                            <p className="text-muted-foreground">Customize the full color scheme of your AR menu interface.</p>
                         </div>
 
                         <div className="glass-card p-8 rounded-2xl border border-border/50 grid grid-cols-1 md:grid-cols-2 gap-8">

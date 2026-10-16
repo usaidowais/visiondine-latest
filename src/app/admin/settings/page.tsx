@@ -174,7 +174,7 @@ export default function GlobalSettingsPage() {
 
                         <div className="space-y-6">
                             {[
-                                { name: 'Welcome Email', desc: 'Sent on registration', subject: 'Subject: Welcome to Global WebAR...', status: 'Active', updated: '2d ago', icon: 'waving_hand', color: 'bg-blue-100 text-blue-600' },
+                                { name: 'Welcome Email', desc: 'Sent on registration', subject: 'Subject: Welcome to VisionDine...', status: 'Active', updated: '2d ago', icon: 'waving_hand', color: 'bg-blue-100 text-blue-600' },
                                 { name: 'Account Suspension', desc: 'Policy violation notice', subject: 'Subject: Important: Action Requi...', status: 'Active', updated: '1mo ago', icon: 'block', color: 'bg-red-100 text-red-600' },
                                 { name: 'Password Reset', desc: 'Security automated', subject: 'Subject: Reset your password ins...', status: 'Active', updated: '6mo ago', icon: 'lock_reset', color: 'bg-yellow-100 text-yellow-600' }
                             ].map((template, idx) => (

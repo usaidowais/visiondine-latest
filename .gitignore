@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# large demo binary assets (served from Supabase Storage in production)
+/public/demo-video.mov
+
+# backup / original project folders (not part of source)
+v2_original/
+*_backup_original/
+
+# scratch / test scripts (development only)
+scratch/
+*.test.mjs
+*.test.cjs

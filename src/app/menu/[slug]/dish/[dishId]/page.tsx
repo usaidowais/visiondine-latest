@@ -82,12 +82,21 @@ export default function SingleDishPage() {
                 )}
 
                 <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-10">
-                    <div className="bg-white/80 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold shadow-sm" style={{ color: effectivePreset.primaryColor || '#000' }}>
-                        {restaurant.name}
+                    <div className="flex items-center gap-2">
+                        <a
+                            href={`/menu/${slug}`}
+                            className="w-8 h-8 rounded-full bg-white/80 backdrop-blur-md flex items-center justify-center text-gray-800 shadow-sm hover:bg-white transition-all active:scale-95"
+                            aria-label="Back to menu"
+                        >
+                            <span className="material-icons-round text-base">arrow_back</span>
+                        </a>
+                        <div className="bg-white/80 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold shadow-sm" style={{ color: effectivePreset.primaryColor || '#000' }}>
+                            {restaurant.name}
+                        </div>
                     </div>
                     {dish.price && (
                         <div className="bg-black/80 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm">
-                            PKR {dish.price}
+                            {dish.currency || 'PKR'} {dish.price}
                         </div>
                     )}
                 </div>
@@ -117,14 +126,26 @@ export default function SingleDishPage() {
                 </p>
 
                 {/* Primary AR Action */}
-                <Button
-                    className="w-full py-6 text-lg rounded-2xl shadow-xl flex items-center justify-center gap-2 transition-transform active:scale-95"
-                    style={{ backgroundColor: effectivePreset.primaryColor || '#000', color: '#fff' }}
-                    onClick={() => setShowAR(true)}
-                >
-                    <span className="material-icons-round text-2xl">view_in_ar</span>
-                    View in AR
-                </Button>
+                {dish.glb_url ? (
+                    <Button
+                        className="w-full py-6 text-lg rounded-2xl shadow-xl flex items-center justify-center gap-2 transition-transform active:scale-95"
+                        style={{ backgroundColor: effectivePreset.primaryColor || '#000', color: '#fff' }}
+                        onClick={() => setShowAR(true)}
+                    >
+                        <span className="material-icons-round text-2xl">view_in_ar</span>
+                        View in AR
+                    </Button>
+                ) : (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 text-center space-y-1">
+                        <div className="flex items-center justify-center gap-1.5 text-amber-700 dark:text-amber-400 font-bold text-sm">
+                            <span className="material-icons-round text-lg">info</span>
+                            3D Model Pending Configuration
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            The 3D model for this dish has not been configured yet. Please upload a .glb model in the AR Demo admin section.
+                        </p>
+                    </div>
+                )}
             </div>
 
             {/* AR Experience Overlay */}
@@ -135,7 +156,7 @@ export default function SingleDishPage() {
                         iosSrc={dish.usdz_url}
                         alt={dish.name}
                         dishName={dish.name}
-                        dishPrice={`PKR ${dish.price}`}
+                        dishPrice={`${dish.currency || 'PKR'} ${dish.price}`}
                         secondaryColor={effectivePreset.secondaryColor}
                         arScale={dish.ar_scale || 1.0}
                         restaurantName={restaurant.name}

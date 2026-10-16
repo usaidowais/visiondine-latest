@@ -8,19 +8,41 @@ import { supabase } from '@/lib/services/supabaseService';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('admin@webar.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [isForgot, setIsForgot] = useState(false);
 
-  const setDemoSession = () => {
-    document.cookie = `supabase-auth-token=demo-token-${Date.now()}; path=/; max-age=86400; SameSite=Lax`;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('visiondine_auth', 'true');
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) {
+      setError('Please enter your administrator email address.');
+      return;
     }
-    window.location.href = '/admin/restaurants';
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/login` : undefined,
+      });
+      if (resetError) throw resetError;
+      setMessage('Password reset instructions have been sent to your email.');
+    } catch (err: any) {
+      const isNetworkError = err?.message?.toLowerCase().includes('fetch') ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('failed to fetch');
+      if (isNetworkError) {
+        setError('Supabase authentication service is currently unreachable. Please check your network connection or verify your Supabase service status.');
+      } else {
+        setError(err?.message || 'Failed to send password reset email.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -29,40 +51,41 @@ export default function LoginPage() {
     setError(null);
     setMessage(null);
 
-    // If default credentials or signup false, grant instant access
-    if (email === 'admin@webar.com' || !isSignUp) {
-      setDemoSession();
-      return;
-    }
-
     try {
-      if (isSignUp) {
-        const { error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (signUpError) throw signUpError;
-        setMessage('Account created! Please check your email to confirm specific verification settings, or try logging in.');
-        setIsSignUp(false);
-      } else {
-        const { data, error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (signInError) throw signInError;
-        
-        if (data.session) {
-          document.cookie = `supabase-auth-token=${data.session.access_token}; path=/; max-age=${data.session.expires_in}; SameSite=Lax`;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('visiondine_auth', 'true');
-          }
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (signInError) {
+        const isNetworkError = signInError.message?.toLowerCase().includes('fetch') ||
+          signInError.message?.toLowerCase().includes('network') ||
+          signInError.message?.toLowerCase().includes('failed to fetch');
+
+        if (isNetworkError) {
+          setError('Supabase authentication service is currently unreachable. Please check your network connection or verify that Supabase is operational. Administrative access requires verified Supabase authentication.');
+        } else {
+          setError(signInError.message || 'Invalid email or password. Please verify your credentials.');
         }
-        
+        setLoading(false);
+        return;
+      }
+
+      if (data?.session) {
+        document.cookie = `supabase-auth-token=${data.session.access_token}; path=/; max-age=${data.session.expires_in}; SameSite=Lax`;
         window.location.href = '/admin/restaurants';
+      } else {
+        setError('Authentication failed. No active session returned by authentication server.');
       }
     } catch (err: any) {
-      console.warn('Auth error, activating demo mode:', err);
-      setDemoSession();
+      const isNetworkError = err?.message?.toLowerCase().includes('fetch') ||
+        err?.message?.toLowerCase().includes('network') ||
+        err?.message?.toLowerCase().includes('failed to fetch');
+      if (isNetworkError) {
+        setError('Supabase authentication service is currently unreachable. Please check your network connection or verify that Supabase is operational. Administrative access requires verified Supabase authentication.');
+      } else {
+        setError(err?.message || 'Authentication failed. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }
@@ -82,72 +105,95 @@ export default function LoginPage() {
             <div className="w-14 h-14 bg-primary rounded-2xl flex items-center justify-center text-primary-foreground font-bold shadow-lg shadow-primary/20 mb-4 text-2xl">
               VD
             </div>
-            <h1 className="text-2xl font-bold text-foreground">VisionDine Super Admin</h1>
-            <p className="text-sm text-muted-foreground">WebAR SaaS Management Console</p>
+            <h1 className="text-2xl font-bold text-foreground">VisionDine 2.0</h1>
+            <p className="text-sm text-muted-foreground">Super Admin Management Console</p>
           </div>
 
-          <form onSubmit={handleAuth} className="space-y-4">
-            {error && (
-              <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">
-                {error}
+          {isForgot ? (
+            <form onSubmit={handlePasswordReset} className="space-y-4">
+              <div className="text-sm text-muted-foreground mb-2">
+                Enter your administrator email to receive a password recovery link via Supabase Auth.
               </div>
-            )}
-            {message && (
-              <div className="bg-green-50 text-green-600 text-sm p-3 rounded-lg">
-                {message}
-              </div>
-            )}
-            <Input
-              label="Email Address"
-              type="email"
-              placeholder="admin@webar.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            <div className="space-y-1">
-              <div className="flex justify-between">
-                <label className="text-sm font-medium text-foreground">Password</label>
-              </div>
+              {error && (
+                <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">
+                  {error}
+                </div>
+              )}
+              {message && (
+                <div className="bg-green-50 text-green-600 text-sm p-3 rounded-lg">
+                  {message}
+                </div>
+              )}
               <Input
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                label="Administrator Email"
+                type="email"
+                placeholder="usaidowais123@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
-            </div>
+              <Button fullWidth size="lg" type="submit" isLoading={loading} className="mt-2 text-lg">
+                Send Reset Link
+              </Button>
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setIsForgot(false); setError(null); setMessage(null); }}
+                  className="text-sm text-primary hover:underline"
+                >
+                  ← Back to Sign In
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleAuth} className="space-y-4">
+              {error && (
+                <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">
+                  {error}
+                </div>
+              )}
+              {message && (
+                <div className="bg-green-50 text-green-600 text-sm p-3 rounded-lg">
+                  {message}
+                </div>
+              )}
+              <Input
+                label="Email Address"
+                type="email"
+                placeholder="admin@visiondine.site"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-medium text-foreground">Password</label>
+                  <button
+                    type="button"
+                    onClick={() => { setIsForgot(true); setError(null); setMessage(null); }}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <Input
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
 
-            <Button fullWidth size="lg" type="submit" isLoading={loading} className="mt-2 text-lg">
-              {isSignUp ? 'Create Account' : 'Access Control Room'}
-            </Button>
-
-            <Button
-              fullWidth
-              size="sm"
-              type="button"
-              variant="outline"
-              onClick={setDemoSession}
-              className="mt-2 border-dashed border-primary/40 text-primary hover:bg-primary/5 font-semibold"
-            >
-              <span className="material-icons-round text-sm mr-1">bolt</span>
-              One-Click Demo Admin Login
-            </Button>
-
-            <div className="text-center pt-2">
-              <button
-                type="button"
-                onClick={() => { setIsSignUp(!isSignUp); setError(null); setMessage(null); }}
-                className="text-sm text-primary hover:underline"
-              >
-                {isSignUp ? 'Already have an account? Log In' : 'Need an account? Sign Up'}
-              </button>
-            </div>
-          </form>
+              <Button fullWidth size="lg" type="submit" isLoading={loading} className="mt-2 text-lg">
+                Sign In
+              </Button>
+            </form>
+          )}
 
           <div className="mt-8 pt-6 border-t border-border/50 text-center">
             <p className="text-xs text-muted-foreground">
-              Demo Credentials: <span className="font-mono text-foreground font-semibold">admin@webar.com</span> / <span className="font-mono text-foreground font-semibold">admin123</span>
+              VisionDine 2.0 Super Admin — Authorised personnel only.
             </p>
           </div>
         </div>

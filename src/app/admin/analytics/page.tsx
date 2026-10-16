@@ -43,7 +43,7 @@ export default function AnalyticsPage() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-foreground">Global Overview</h1>
-                    <p className="text-muted-foreground mt-1">WebAR Platform Super Admin</p>
+                    <p className="text-muted-foreground mt-1">VisionDine 2.0 Super Admin</p>
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -90,10 +90,11 @@ export default function AnalyticsPage() {
                         <div>
                             <p className="text-sm font-medium text-muted-foreground">Total Global Scans</p>
                             <h3 className="text-3xl font-bold text-foreground mt-1">0</h3>
+                            <p className="text-[11px] text-muted-foreground mt-1 font-medium">Real measured count (0 scans logged)</p>
                         </div>
                         <span className="bg-secondary text-muted-foreground text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1">
-                            <span className="material-icons-round text-xs">horizontal_rule</span>
-                            0%
+                            <span className="material-icons-round text-xs">check_circle</span>
+                            Active
                         </span>
                     </div>
                     <div className="h-16 -mx-2 opacity-50 relative z-0">
@@ -117,6 +118,7 @@ export default function AnalyticsPage() {
                         <div>
                             <p className="text-sm font-medium text-muted-foreground">AR Interaction Rate</p>
                             <h3 className="text-3xl font-bold text-foreground mt-1">0%</h3>
+                            <p className="text-[11px] text-muted-foreground mt-1 font-medium">Real measured conversion</p>
                         </div>
                         <span className="bg-secondary text-muted-foreground text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1">
                             <span className="material-icons-round text-xs">horizontal_rule</span>
@@ -143,17 +145,18 @@ export default function AnalyticsPage() {
                     <div className="flex justify-between items-start mb-4 relative z-10">
                         <div>
                             <p className="text-sm font-medium text-muted-foreground">Avg. Session Time</p>
-                            <h3 className="text-3xl font-bold text-foreground mt-1">--</h3>
+                            <h3 className="text-3xl font-bold text-muted-foreground mt-1">N/A</h3>
+                            <p className="text-[11px] text-muted-foreground mt-1 font-medium">Metric unavailable (telemetry not configured)</p>
                         </div>
-                        <span className="bg-secondary text-muted-foreground text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1">
-                            <span className="material-icons-round text-xs">horizontal_rule</span>
-                            0%
+                        <span className="bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1">
+                            <span className="material-icons-round text-xs">info</span>
+                            Unavailable
                         </span>
                     </div>
                     <div className="h-16 -mx-2 opacity-50 relative z-0">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={sessionSpark}>
-                                <Line type="monotone" dataKey="v" stroke="#EF4444" strokeWidth={2} dot={false} />
+                                <Line type="monotone" dataKey="v" stroke="#9CA3AF" strokeWidth={2} dot={false} strokeDasharray="3 3" />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
@@ -168,7 +171,10 @@ export default function AnalyticsPage() {
                 <div className="lg:col-span-2 glass-card p-6 rounded-2xl border border-border/50 shadow-sm">
                     <div className="flex justify-between items-center mb-6">
                         <div>
-                            <h3 className="text-lg font-bold text-foreground">Engagement Trends</h3>
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-lg font-bold text-foreground">Engagement Trends</h3>
+                                <span className="text-[10px] bg-secondary text-muted-foreground px-2 py-0.5 rounded-full font-semibold">No events recorded yet</span>
+                            </div>
                             <p className="text-sm text-muted-foreground">Comparing QR Scans vs AR Views</p>
                         </div>
                         <div className="flex items-center gap-4 text-sm text-muted-foreground">
@@ -238,20 +244,26 @@ export default function AnalyticsPage() {
                             <button className="text-sm text-primary font-semibold hover:underline">View All</button>
                         </div>
                         <div className="space-y-5">
-                            {topRestaurants.map((res, i) => (
-                                <div key={i}>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="font-medium text-foreground">{res.name}</span>
-                                        <span className="text-muted-foreground text-xs">{res.scans.toLocaleString()} Scans</span>
-                                    </div>
-                                    <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full bg-primary rounded-full"
-                                            style={{ width: `${(res.scans / res.max) * 100}%` }}
-                                        ></div>
-                                    </div>
+                            {topRestaurants.length === 0 ? (
+                                <div className="py-8 text-center text-sm text-muted-foreground">
+                                    No scan data collected yet
                                 </div>
-                            ))}
+                            ) : (
+                                topRestaurants.map((res, i) => (
+                                    <div key={i}>
+                                        <div className="flex justify-between text-sm mb-1">
+                                            <span className="font-medium text-foreground">{res.name}</span>
+                                            <span className="text-muted-foreground text-xs">{res.scans.toLocaleString()} Scans</span>
+                                        </div>
+                                        <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full bg-primary rounded-full"
+                                                style={{ width: `${(res.scans / res.max) * 100}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
 
@@ -277,19 +289,25 @@ export default function AnalyticsPage() {
                                 </ResponsiveContainer>
                                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                                     <span className="text-xs text-muted-foreground">Total</span>
-                                    <span className="text-md font-bold text-foreground">0%</span>
+                                    <span className="text-xs font-bold text-muted-foreground">No data</span>
                                 </div>
                             </div>
                             <div className="space-y-3 flex-1">
-                                {deviceData.map((item, i) => (
-                                    <div key={i} className="flex justify-between items-center text-sm">
-                                        <div className="flex items-center gap-2">
-                                            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: item.color }}></span>
-                                            <span className="text-muted-foreground">{item.name}</span>
-                                        </div>
-                                        <span className="font-bold text-foreground">{item.value}%</span>
+                                {deviceData.every(item => item.value === 0) ? (
+                                    <div className="py-2 text-xs text-muted-foreground">
+                                        No device telemetry collected yet
                                     </div>
-                                ))}
+                                ) : (
+                                    deviceData.map((item, i) => (
+                                        <div key={i} className="flex justify-between items-center text-sm">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: item.color }}></span>
+                                                <span className="text-muted-foreground">{item.name}</span>
+                                            </div>
+                                            <span className="font-bold text-foreground">{item.value}%</span>
+                                        </div>
+                                    ))
+                                )}
                             </div>
                         </div>
                     </div>
@@ -314,42 +332,51 @@ export default function AnalyticsPage() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                        {recentTenants.map((tenant) => (
-                            <tr key={tenant.id} className="hover:bg-secondary/20 transition-colors">
-                                <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${tenant.color}`}>
-                                            {tenant.initial}
-                                        </div>
-                                        <span className="font-semibold text-foreground">{tenant.name}</span>
-                                    </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                    <span className={`px-2 py-0.5 rounded text-xs font-bold border ${tenant.status === 'Active' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                                        }`}>
-                                        {tenant.status}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 text-muted-foreground">{tenant.date}</td>
-                                <td className="px-6 py-4 font-medium text-foreground">{tenant.plan}</td>
-                                <td className="px-6 py-4 text-right">
-                                    <button className="text-muted-foreground hover:text-foreground">
-                                        <span className="material-icons-round text-lg">more_vert</span>
-                                    </button>
+                        {recentTenants.length === 0 ? (
+                            <tr>
+                                <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
+                                    No tenant onboarding events recorded yet
                                 </td>
                             </tr>
-                        ))}
+                        ) : (
+                            recentTenants.map((tenant) => (
+                                <tr key={tenant.id} className="hover:bg-secondary/20 transition-colors">
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${tenant.color}`}>
+                                                {tenant.initial}
+                                            </div>
+                                            <span className="font-semibold text-foreground">{tenant.name}</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <span className={`px-2 py-0.5 rounded text-xs font-bold border ${tenant.status === 'Active' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                            }`}>
+                                            {tenant.status}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-muted-foreground">{tenant.date}</td>
+                                    <td className="px-6 py-4 font-medium text-foreground">{tenant.plan}</td>
+                                    <td className="px-6 py-4 text-right">
+                                        <button className="text-muted-foreground hover:text-foreground">
+                                            <span className="material-icons-round text-lg">more_vert</span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
             </div>
-
-
 
             {/* Global Activity Heatmap */}
             <div className="glass-card p-8 rounded-2xl border border-border/50 shadow-sm relative overflow-hidden">
                 <div className="flex justify-between items-end mb-8">
                     <div>
-                        <h3 className="text-xl font-bold text-foreground">Global Activity Heatmap</h3>
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-xl font-bold text-foreground">Global Activity Heatmap</h3>
+                            <span className="text-[10px] bg-secondary text-muted-foreground px-2 py-0.5 rounded-full font-semibold">No activity recorded yet</span>
+                        </div>
                         <p className="text-sm text-muted-foreground mt-1">Scan intensity by day and time (Local Time)</p>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/30 px-3 py-1.5 rounded-lg border border-border/50">

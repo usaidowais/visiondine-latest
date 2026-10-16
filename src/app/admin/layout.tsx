@@ -19,40 +19,45 @@ export default function AdminLayout({
         let mounted = true;
 
         const checkAuth = async () => {
-            // 1. Check if demo cookie or local storage auth exists
-            const hasCookie = typeof document !== 'undefined' && document.cookie.includes('supabase-auth-token');
-            const hasStorage = typeof window !== 'undefined' && localStorage.getItem('visiondine_auth') === 'true';
-
-            if (hasCookie || hasStorage) {
-                if (mounted) setIsLoading(false);
-                return;
-            }
-
-            // 2. Check Supabase auth session
             try {
-                const { data: { session } } = await supabase.auth.getSession();
+                const { data: { session }, error } = await supabase.auth.getSession();
                 if (!mounted) return;
 
-                if (session) {
-                    if (mounted) setIsLoading(false);
+                if (error || !session) {
+                    document.cookie = 'supabase-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                    if (typeof window !== 'undefined') {
+                        localStorage.removeItem('visiondine_auth');
+                    }
+                    router.push('/login');
                     return;
                 }
 
-                // If not authenticated, redirect to login
-                router.push('/login');
-            } catch (error) {
-                console.warn('Supabase auth session check offline, proceeding with demo access:', error);
-                // In demo / offline fallback mode, allow access
+                // Sync the active token to cookie so middleware always stays valid across navigations and refresh
+                document.cookie = `supabase-auth-token=${session.access_token}; path=/; max-age=${session.expires_in}; SameSite=Lax`;
+
                 if (mounted) setIsLoading(false);
+            } catch (error) {
+                console.error('Authentication verification error:', error);
+                if (mounted) {
+                    document.cookie = 'supabase-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                    if (typeof window !== 'undefined') {
+                        localStorage.removeItem('visiondine_auth');
+                    }
+                    router.push('/login');
+                }
             }
         };
 
         checkAuth();
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            const hasCookie = typeof document !== 'undefined' && document.cookie.includes('supabase-auth-token');
-            const hasStorage = typeof window !== 'undefined' && localStorage.getItem('visiondine_auth') === 'true';
-            if (!session && !hasCookie && !hasStorage && mounted) {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (session) {
+                document.cookie = `supabase-auth-token=${session.access_token}; path=/; max-age=${session.expires_in}; SameSite=Lax`;
+            } else if ((event === 'SIGNED_OUT' || !session) && mounted) {
+                document.cookie = 'supabase-auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                if (typeof window !== 'undefined') {
+                    localStorage.removeItem('visiondine_auth');
+                }
                 router.push('/login');
             }
         });
@@ -99,7 +104,7 @@ export default function AdminLayout({
                 <div className="md:hidden sticky top-0 z-40 px-4 py-3 bg-background/80 backdrop-blur-md border-b border-border flex justify-between items-center">
                     <div className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold">VD</div>
-                        <span className="font-bold text-foreground">VisionDine Admin</span>
+                        <span className="font-bold text-foreground">VisionDine 2.0 Admin</span>
                     </div>
                     <button onClick={() => setIsMobileMenuOpen(true)}>
                         <span className="material-icons-round text-foreground">menu</span>

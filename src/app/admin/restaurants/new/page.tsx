@@ -81,10 +81,19 @@ export default function NewRestaurantPage() {
                 .replace(/(^-|-$)+/g, '') // Remove distinct leading/trailing hyphens
                 + '-' + Math.floor(Math.random() * 1000); // Add random suffix to ensure uniqueness
 
-            // 3. Create Restaurant in DB
-            const { data: { user } } = await supabase.auth.getUser();
+            // 3. Verify authenticated administrator before database mutation
+            const { data: { session } } = await supabase.auth.getSession();
+            let user = session?.user ?? null;
+            if (!user) {
+                const { data: userData } = await supabase.auth.getUser();
+                user = userData?.user ?? null;
+            }
 
-            if (!user) throw new Error('You must be logged in to create a restaurant');
+            if (!user) {
+                setUploadError('Active administrator authentication required. Please sign in to create a restaurant.');
+                setIsLoading(false);
+                return;
+            }
 
             const newRestaurant = await supabaseService.createRestaurant({
                 name: formData.name,
@@ -99,7 +108,7 @@ export default function NewRestaurantPage() {
             if (newRestaurant) {
                 router.push('/admin/restaurants');
             } else {
-                setUploadError('Failed to create restaurant. Please try again.');
+                setUploadError('Failed to create restaurant in database. Please verify your connection to Supabase and try again.');
             }
 
         } catch (error: any) {

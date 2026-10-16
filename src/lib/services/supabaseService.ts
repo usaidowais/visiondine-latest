@@ -58,6 +58,17 @@ let memoryRestaurants: Restaurant[] = [
 
 let memoryDishes: Dish[] = [
     {
+        id: 'wood-fired-pizza',
+        restaurant_id: 'rest-khansaab-001',
+        name: 'Wood-Fired Artisan Pizza',
+        description: 'Fresh mozzarella, San Marzano tomato sauce, fragrant basil leaves, and extra virgin olive oil on a blistered crust.',
+        price: 18.50,
+        category: 'Specialty',
+        image_url: '/dish-pizza.svg',
+        glb_url: '/assets/pizza-source.glb',
+        ar_scale: 1.0
+    },
+    {
         id: 'dish-k1',
         restaurant_id: 'rest-khansaab-001',
         name: 'Special Chicken Biryani',
@@ -133,9 +144,9 @@ let memoryDishes: Dish[] = [
     }
 ];
 
-async function withTimeout<T>(promise: Promise<T>, ms = 2000): Promise<T> {
+async function withTimeout<T>(promise: PromiseLike<T> | Promise<T>, ms = 6000): Promise<T> {
     return Promise.race([
-        promise,
+        Promise.resolve(promise),
         new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Supabase request timed out')), ms))
     ]);
 }
@@ -155,15 +166,15 @@ export const supabaseService = {
             return {
                 totalRestaurants: rRes.count ?? memoryRestaurants.length,
                 activeMenus: rRes.count ?? memoryRestaurants.length,
-                totalScans: sRes.count ?? 1420,
-                arConversions: 38
+                totalScans: sRes.count ?? 0,
+                arConversions: 0
             };
         } catch {
             return {
                 totalRestaurants: memoryRestaurants.length,
                 activeMenus: memoryRestaurants.length,
-                totalScans: 1420,
-                arConversions: 38
+                totalScans: 0,
+                arConversions: 0
             };
         }
     },
@@ -171,7 +182,7 @@ export const supabaseService = {
     getSystemHealth: async () => {
         let totalRestaurants = memoryRestaurants.length;
         let totalModels = memoryDishes.length;
-        let totalEvents = 1420;
+        let totalEvents = 0;
 
         try {
             const { count: rCount } = await withTimeout(supabase.from('restaurants').select('*', { count: 'exact', head: true }));
@@ -185,7 +196,7 @@ export const supabaseService = {
         }
 
         const storageLimitMB = 500;
-        const totalStorageUsedMB = 14.5;
+        const totalStorageUsedMB = 0;
         const storageUsedPercent = Math.min(100, Math.round((totalStorageUsedMB / storageLimitMB) * 100));
         const dbLoadPercent = Math.min(95, Math.round(5 + (totalRestaurants * 0.5) + (totalEvents * 0.01)));
         const activeConnections = Math.max(5, totalRestaurants * 2);
@@ -243,11 +254,6 @@ export const supabaseService = {
     },
 
     createRestaurant: async (restaurant: Omit<Restaurant, 'id'>): Promise<Restaurant | null> => {
-        const newRest: Restaurant = {
-            ...restaurant,
-            id: `rest-${Date.now()}`
-        };
-
         try {
             const { data, error } = await withTimeout(
                 supabase.from('restaurants').insert(restaurant).select().single()
@@ -256,12 +262,16 @@ export const supabaseService = {
                 memoryRestaurants.unshift(data as Restaurant);
                 return data as Restaurant;
             }
-        } catch {
-            // Offline fallback
+            if (error) {
+                console.error('Failed to insert restaurant in Supabase:', error);
+                return null;
+            }
+        } catch (err) {
+            console.error('Supabase connection error during restaurant creation:', err);
+            return null;
         }
 
-        memoryRestaurants.unshift(newRest);
-        return newRest;
+        return null;
     },
 
     getRestaurantDishes: async (restaurantId: string): Promise<Dish[]> => {
@@ -308,7 +318,7 @@ export const supabaseService = {
         return newDish;
     },
 
-    updateDish: async (dishId: string, updates: Partial<Dish>): Promise<Dish | null> => {
+    updateDishWithStatus: async (dishId: string, updates: Partial<Dish>): Promise<{ dish: Dish | null; persisted: boolean }> => {
         try {
             const { data, error } = await withTimeout(
                 supabase.from('dishes').update(updates).eq('id', dishId).select().single()
@@ -316,7 +326,7 @@ export const supabaseService = {
             if (!error && data) {
                 const idx = memoryDishes.findIndex(d => d.id === dishId);
                 if (idx !== -1) memoryDishes[idx] = data as Dish;
-                return data as Dish;
+                return { dish: data as Dish, persisted: true };
             }
         } catch {
             // Offline fallback
@@ -325,9 +335,14 @@ export const supabaseService = {
         const idx = memoryDishes.findIndex(d => d.id === dishId);
         if (idx !== -1) {
             memoryDishes[idx] = { ...memoryDishes[idx], ...updates };
-            return memoryDishes[idx];
+            return { dish: memoryDishes[idx], persisted: false };
         }
-        return null;
+        return { dish: null, persisted: false };
+    },
+
+    updateDish: async (dishId: string, updates: Partial<Dish>): Promise<Dish | null> => {
+        const result = await supabaseService.updateDishWithStatus(dishId, updates);
+        return result.dish;
     },
 
     deleteDish: async (dishId: string) => {
@@ -441,7 +456,284 @@ export const supabaseService = {
         };
     },
 
+    // --- AR Demo Dish Methods (Centralized Supabase Persistence) ---
+    getDemoDish: async (): Promise<Dish> => {
+        const defaultDemoDish: Dish = {
+            id: 'wood-fired-pizza',
+            restaurant_id: 'rest-khansaab-001',
+            name: 'Wood-Fired Artisan Pizza',
+            description: 'Fresh mozzarella, San Marzano tomato sauce, fragrant basil leaves, and extra virgin olive oil on a blistered crust.',
+            price: 18.50,
+            currency: 'PKR',
+            category: 'Specialty',
+            image_url: '/dish-pizza.svg',
+            glb_url: '/assets/pizza-source.glb',
+            ar_scale: 1.0
+        };
+
+        // 1. Authoritative Central Source: Supabase Database Table (`demo_dish_config`)
+        try {
+            const { data, error } = await withTimeout(
+                supabase.from('demo_dish_config').select('*').eq('id', 'wood-fired-pizza').single(),
+                3000
+            );
+
+            if (!error && data) {
+                const dishFromDb: Dish = {
+                    id: 'wood-fired-pizza',
+                    restaurant_id: 'rest-khansaab-001',
+                    name: data.name || defaultDemoDish.name,
+                    description: data.description ?? defaultDemoDish.description,
+                    price: typeof data.price === 'number' ? data.price : parseFloat(data.price) || defaultDemoDish.price,
+                    currency: data.currency || defaultDemoDish.currency || 'PKR',
+                    category: data.category || defaultDemoDish.category,
+                    image_url: data.image_url || defaultDemoDish.image_url,
+                    glb_url: data.glb_url || defaultDemoDish.glb_url,
+                    ar_scale: typeof data.ar_scale === 'number' ? data.ar_scale : defaultDemoDish.ar_scale
+                };
+
+                const idx = memoryDishes.findIndex(d => d.id === 'wood-fired-pizza');
+                if (idx !== -1) memoryDishes[idx] = dishFromDb;
+                if (typeof window !== 'undefined') {
+                    try { localStorage.setItem('visiondine_demo_dish_cache', JSON.stringify(dishFromDb)); } catch {}
+                }
+                return dishFromDb;
+            }
+        } catch {
+            // DB query timed out or table not yet created
+        }
+
+        // 2. Central Public Fallback: Supabase Storage Central JSON Configuration
+        // Ensures public visitors on any device receive saved changes even before SQL migrations are applied
+        try {
+            const centralConfigUrls = [
+                `${supabaseUrl}/storage/v1/object/public/media/config/demo-dish.json`,
+                `${supabaseUrl}/storage/v1/object/public/media/d321936e-ffc0-4bf0-9964-19a55a36aef7/demo-dish-config.json`
+            ];
+
+            for (const url of centralConfigUrls) {
+                try {
+                    const res = await withTimeout(fetch(url, { cache: 'no-store' }), 3000);
+                    if (res.ok) {
+                        const parsed = await res.json();
+                        if (parsed && parsed.name) {
+                            const dishFromStorage: Dish = {
+                                id: 'wood-fired-pizza',
+                                restaurant_id: 'rest-khansaab-001',
+                                name: parsed.name,
+                                description: parsed.description ?? defaultDemoDish.description,
+                                price: typeof parsed.price === 'number' ? parsed.price : parseFloat(parsed.price) || defaultDemoDish.price,
+                                currency: parsed.currency || defaultDemoDish.currency || 'PKR',
+                                category: parsed.category || defaultDemoDish.category,
+                                image_url: parsed.image_url || defaultDemoDish.image_url,
+                                glb_url: parsed.glb_url || defaultDemoDish.glb_url,
+                                ar_scale: typeof parsed.ar_scale === 'number' ? parsed.ar_scale : defaultDemoDish.ar_scale
+                            };
+
+                            const idx = memoryDishes.findIndex(d => d.id === 'wood-fired-pizza');
+                            if (idx !== -1) memoryDishes[idx] = dishFromStorage;
+                            if (typeof window !== 'undefined') {
+                                try { localStorage.setItem('visiondine_demo_dish_cache', JSON.stringify(dishFromStorage)); } catch {}
+                            }
+                            return dishFromStorage;
+                        }
+                    }
+                } catch {
+                    // Try next storage URL
+                }
+            }
+        } catch {
+            // Storage fetch failed
+        }
+
+        // 3. Optional offline client cache (purely secondary cache, never authoritative)
+        if (typeof window !== 'undefined') {
+            try {
+                const cached = localStorage.getItem('visiondine_demo_dish_cache') || localStorage.getItem('visiondine_demo_dish_config');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (parsed && typeof parsed === 'object') {
+                        return { ...defaultDemoDish, ...parsed, id: 'wood-fired-pizza' };
+                    }
+                }
+            } catch {
+                // Ignore parse errors
+            }
+        }
+
+        // 4. Default in-memory seed
+        const found = memoryDishes.find(d => d.id === 'wood-fired-pizza');
+        return found || defaultDemoDish;
+    },
+
+    saveDemoDish: async (updates: Partial<Dish>): Promise<{
+        dish: Dish;
+        persistedRemote: boolean;
+        persistedDb: boolean;
+        persistedStorage: boolean;
+        error?: string;
+    }> => {
+        // Enforce Super-Admin Authentication
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+            throw new Error('Authentication required: You must be logged in as super-admin to modify the AR Demo dish.');
+        }
+
+        const current = await supabaseService.getDemoDish();
+        const updatedDish: Dish = {
+            ...current,
+            ...updates,
+            id: 'wood-fired-pizza',
+            currency: updates.currency || current.currency || 'PKR'
+        };
+
+        let persistedDb = false;
+        let dbError: string | null = null;
+        let persistedStorage = false;
+        let storageError: string | null = null;
+
+        // 1. Central Persistence: Supabase Database Table (`demo_dish_config`)
+        try {
+            const { error: dbErr } = await withTimeout(
+                supabase.from('demo_dish_config').upsert({
+                    id: 'wood-fired-pizza',
+                    name: updatedDish.name,
+                    description: updatedDish.description,
+                    price: updatedDish.price,
+                    currency: updatedDish.currency || 'PKR',
+                    category: updatedDish.category,
+                    image_url: updatedDish.image_url,
+                    glb_url: updatedDish.glb_url,
+                    ar_scale: updatedDish.ar_scale,
+                    updated_at: new Date().toISOString(),
+                    updated_by: session.user.id
+                }, { onConflict: 'id' }),
+                4000
+            );
+
+            if (!dbErr) {
+                persistedDb = true;
+            } else {
+                dbError = dbErr.message;
+            }
+        } catch (err: any) {
+            dbError = err?.message || 'Database connection timeout';
+        }
+
+        // 2. Central Persistence: Supabase Storage (`media` bucket JSON configuration)
+        // Ensures instant accessibility to all public visitors across devices
+        try {
+            const configPayload = JSON.stringify(updatedDish, null, 2);
+            const blob = new Blob([configPayload], { type: 'application/json' });
+
+            // Upload under authenticated user directory (guaranteed permitted by Storage RLS)
+            const userConfigPath = `${session.user.id}/demo-dish-config.json`;
+            const { error: userUploadErr } = await supabase.storage
+                .from('media')
+                .upload(userConfigPath, blob, { upsert: true, contentType: 'application/json' });
+
+            // Also attempt upload to shared public config path
+            const sharedConfigPath = 'config/demo-dish.json';
+            const { error: sharedUploadErr } = await supabase.storage
+                .from('media')
+                .upload(sharedConfigPath, blob, { upsert: true, contentType: 'application/json' });
+
+            if (!userUploadErr || !sharedUploadErr) {
+                persistedStorage = true;
+            } else {
+                storageError = userUploadErr?.message || sharedUploadErr?.message || 'Storage upload failed';
+            }
+        } catch (err: any) {
+            storageError = err?.message || 'Storage save exception';
+        }
+
+        // 3. Update in-memory fallback
+        const idx = memoryDishes.findIndex(d => d.id === 'wood-fired-pizza');
+        if (idx !== -1) {
+            memoryDishes[idx] = updatedDish;
+        } else {
+            memoryDishes.unshift(updatedDish);
+        }
+
+        // 4. Update optional client cache
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem('visiondine_demo_dish_cache', JSON.stringify(updatedDish));
+            } catch {}
+        }
+
+        const persistedRemote = persistedDb || persistedStorage;
+
+        return {
+            dish: updatedDish,
+            persistedRemote,
+            persistedDb,
+            persistedStorage,
+            error: !persistedRemote
+                ? `Save failed: DB (${dbError || 'offline'}), Storage (${storageError || 'offline'})`
+                : undefined
+        };
+    },
+
+    resetDemoDish: async (): Promise<Dish> => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+            throw new Error('Authentication required: You must be logged in as super-admin to reset the AR Demo dish.');
+        }
+
+        const defaultDemoDish: Dish = {
+            id: 'wood-fired-pizza',
+            restaurant_id: 'rest-khansaab-001',
+            name: 'Wood-Fired Artisan Pizza',
+            description: 'Fresh mozzarella, San Marzano tomato sauce, fragrant basil leaves, and extra virgin olive oil on a blistered crust.',
+            price: 18.50,
+            currency: 'PKR',
+            category: 'Specialty',
+            image_url: '/dish-pizza.svg',
+            glb_url: '/assets/pizza-source.glb',
+            ar_scale: 1.0
+        };
+
+        // Reset in Supabase DB
+        try {
+            await supabase.from('demo_dish_config').upsert({
+                id: 'wood-fired-pizza',
+                name: defaultDemoDish.name,
+                description: defaultDemoDish.description,
+                price: defaultDemoDish.price,
+                currency: defaultDemoDish.currency,
+                category: defaultDemoDish.category,
+                image_url: defaultDemoDish.image_url,
+                glb_url: defaultDemoDish.glb_url,
+                ar_scale: defaultDemoDish.ar_scale,
+                updated_at: new Date().toISOString(),
+                updated_by: session.user.id
+            }, { onConflict: 'id' });
+        } catch {}
+
+        // Reset in Supabase Storage
+        try {
+            const blob = new Blob([JSON.stringify(defaultDemoDish, null, 2)], { type: 'application/json' });
+            await supabase.storage.from('media').upload(`${session.user.id}/demo-dish-config.json`, blob, { upsert: true, contentType: 'application/json' });
+            await supabase.storage.from('media').upload('config/demo-dish.json', blob, { upsert: true, contentType: 'application/json' });
+        } catch {}
+
+        if (typeof window !== 'undefined') {
+            localStorage.removeItem('visiondine_demo_dish_cache');
+            localStorage.removeItem('visiondine_demo_dish_config');
+        }
+
+        const idx = memoryDishes.findIndex(d => d.id === 'wood-fired-pizza');
+        if (idx !== -1) memoryDishes[idx] = defaultDemoDish;
+
+        return defaultDemoDish;
+    },
+
     getDishById: async (dishId: string): Promise<Dish | null> => {
+        if (dishId === 'wood-fired-pizza') {
+            return await supabaseService.getDemoDish();
+        }
+
         try {
             const { data, error } = await withTimeout(
                 supabase.from('dishes').select('*').eq('id', dishId).single()
@@ -452,7 +744,7 @@ export const supabaseService = {
         }
 
         const found = memoryDishes.find(d => d.id === dishId);
-        return found || memoryDishes[0];
+        return found || null;
     },
 
     // --- Theme Inheritance Methods ---
@@ -483,7 +775,196 @@ export const supabaseService = {
     },
 
     // --- Storage ---
-    uploadImage: async (bucket: string, file: File): Promise<string | null> => {
+    uploadModelWithProgress: async (
+        file: File,
+        onProgress?: (percent: number) => void
+    ): Promise<{ url: string | null; persisted: boolean; error?: string }> => {
+        // Validation 1: Must be .glb extension
+        if (!file.name.toLowerCase().endsWith('.glb')) {
+            return {
+                url: null,
+                persisted: false,
+                error: 'Invalid file format. Only 3D GLB (.glb) models are supported.'
+            };
+        }
+
+        // Validation 2: Reasonable file size limit (max 30MB)
+        const MAX_SIZE = 30 * 1024 * 1024;
+        if (file.size > MAX_SIZE) {
+            return {
+                url: null,
+                persisted: false,
+                error: `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum allowed size is 30 MB for mobile WebAR stability.`
+            };
+        }
+
+        // Auth check: require active super-admin session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+            return {
+                url: null,
+                persisted: false,
+                error: 'Authentication required. Please sign in as super-admin to upload 3D models.'
+            };
+        }
+
+        const userId = session.user.id;
+        const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const fileName = `${Date.now()}_${sanitizedName}`;
+        const filePath = `${userId}/${fileName}`;
+
+        return new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            const uploadUrl = `${supabaseUrl}/storage/v1/object/media/${filePath}`;
+
+            xhr.open('POST', uploadUrl, true);
+            xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+            xhr.setRequestHeader('apikey', supabaseAnonKey);
+            xhr.setRequestHeader('x-upsert', 'true');
+
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable && onProgress) {
+                    const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
+                    onProgress(percent);
+                }
+            };
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    onProgress?.(100);
+                    const { data } = supabase.storage.from('media').getPublicUrl(filePath);
+                    resolve({
+                        url: data.publicUrl,
+                        persisted: true
+                    });
+                } else {
+                    let errMsg = `Upload failed with HTTP ${xhr.status}`;
+                    try {
+                        const parsed = JSON.parse(xhr.responseText);
+                        errMsg = parsed.message || parsed.error || errMsg;
+                    } catch {
+                        if (xhr.responseText) errMsg = xhr.responseText;
+                    }
+                    resolve({
+                        url: null,
+                        persisted: false,
+                        error: errMsg
+                    });
+                }
+            };
+
+            xhr.onerror = () => {
+                resolve({
+                    url: null,
+                    persisted: false,
+                    error: 'Network connection error during file upload to Supabase Storage.'
+                });
+            };
+
+            xhr.onabort = () => {
+                resolve({
+                    url: null,
+                    persisted: false,
+                    error: 'Upload aborted by user or network timeout.'
+                });
+            };
+
+            xhr.send(file);
+        });
+    },
+
+    uploadImageFileWithProgress: async (
+        file: File,
+        onProgress?: (percent: number) => void
+    ): Promise<{ url: string | null; persisted: boolean; error?: string }> => {
+        // Validation: Image formats
+        const validExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.svg'];
+        const isImage = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext)) || file.type.startsWith('image/');
+        if (!isImage) {
+            return {
+                url: null,
+                persisted: false,
+                error: 'Invalid file format. Please upload a PNG, JPEG, WebP, or SVG image.'
+            };
+        }
+
+        // Validation: Max 5MB
+        const MAX_SIZE = 5 * 1024 * 1024;
+        if (file.size > MAX_SIZE) {
+            return {
+                url: null,
+                persisted: false,
+                error: `Image is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum allowed size is 5 MB.`
+            };
+        }
+
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+            return {
+                url: null,
+                persisted: false,
+                error: 'Authentication required. Please sign in as super-admin to upload images.'
+            };
+        }
+
+        const userId = session.user.id;
+        const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const fileName = `${Date.now()}_${sanitizedName}`;
+        const filePath = `${userId}/${fileName}`;
+
+        return new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            const uploadUrl = `${supabaseUrl}/storage/v1/object/media/${filePath}`;
+
+            xhr.open('POST', uploadUrl, true);
+            xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+            xhr.setRequestHeader('apikey', supabaseAnonKey);
+            xhr.setRequestHeader('x-upsert', 'true');
+
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable && onProgress) {
+                    const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
+                    onProgress(percent);
+                }
+            };
+
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    onProgress?.(100);
+                    const { data } = supabase.storage.from('media').getPublicUrl(filePath);
+                    resolve({
+                        url: data.publicUrl,
+                        persisted: true
+                    });
+                } else {
+                    let errMsg = `Upload failed with HTTP ${xhr.status}`;
+                    try {
+                        const parsed = JSON.parse(xhr.responseText);
+                        errMsg = parsed.message || parsed.error || errMsg;
+                    } catch {
+                        if (xhr.responseText) errMsg = xhr.responseText;
+                    }
+                    resolve({
+                        url: null,
+                        persisted: false,
+                        error: errMsg
+                    });
+                }
+            };
+
+            xhr.onerror = () => {
+                resolve({
+                    url: null,
+                    persisted: false,
+                    error: 'Network error during image upload to Supabase Storage.'
+                });
+            };
+
+            xhr.send(file);
+        });
+    },
+
+    uploadImageWithStatus: async (bucket: string, file: File): Promise<{ url: string | null; persisted: boolean }> => {
         try {
             const { data: { user } } = await supabase.auth.getUser();
             const userId = user?.id || 'demo-user';
@@ -497,14 +978,19 @@ export const supabaseService = {
 
             if (!uploadError) {
                 const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
-                return data.publicUrl;
+                return { url: data.publicUrl, persisted: true };
             }
         } catch {
             // Fallback: create object URL
         }
 
         // Return a local object URL for preview if offline
-        return URL.createObjectURL(file);
+        return { url: URL.createObjectURL(file), persisted: false };
+    },
+
+    uploadImage: async (bucket: string, file: File): Promise<string | null> => {
+        const result = await supabaseService.uploadImageWithStatus(bucket, file);
+        return result.url;
     },
 
     // --- Analytics ---

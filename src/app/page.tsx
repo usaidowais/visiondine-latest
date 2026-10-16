@@ -309,7 +309,7 @@ export default function LandingPage() {
                   to explore a live demo of our AR-powered restaurant menu.
                 </p>
                 <a
-                  href="/menu/khansaab"
+                  href="/menu/khansaab/dish/wood-fired-pizza"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 mt-5 bg-teal-400 hover:bg-teal-500 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow-md"
@@ -604,7 +604,7 @@ export default function LandingPage() {
                 {/* WhatsApp */}
                 <a
                   id="contact-whatsapp"
-                  href="https://wa.me/1234567890"
+                  href="https://wa.me/YOUR_WHATSAPP_NUMBER"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="group flex items-center gap-4 bg-white rounded-xl border border-[#e5e2da] p-5 hover:shadow-[0_4px_20px_rgba(10,10,10,0.04)] hover:border-[#bbc9c7] transition-all duration-200"
@@ -625,7 +625,7 @@ export default function LandingPage() {
                 {/* Direct Call */}
                 <a
                   id="contact-call"
-                  href="tel:+1234567890"
+                  href="tel:+YOUR_PHONE_NUMBER"
                   className="group flex items-center gap-4 bg-white rounded-xl border border-[#e5e2da] p-5 hover:shadow-[0_4px_20px_rgba(10,10,10,0.04)] hover:border-[#bbc9c7] transition-all duration-200"
                 >
                   <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-orange-50 text-orange-500 group-hover:scale-105 transition-transform duration-200">
