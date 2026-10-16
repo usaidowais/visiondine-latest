@@ -32,20 +32,18 @@ export const ARModelViewer: React.FC<ARModelViewerProps> = ({ src, poster, alt, 
                 shadow-intensity="1"
                 camera-controls
                 touch-action="pan-y"
-                ar
-                ar-scale="fixed"
                 crossorigin="anonymous"
-                ar-modes="webxr scene-viewer quick-look"
                 onError={(e: any) => {
                     console.warn("ARModelViewer load notice:", e);
                     setLoadError("3D Preview unavailable");
                 }}
-                on-ar-status={(e: any) => {
-                    if (e.detail?.status === 'session-started') handleARStart();
-                }}
                 class="w-full h-full"
             >
-                <button slot="ar-button" className="absolute bottom-4 right-4 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-full font-bold text-sm shadow-lg flex items-center gap-2 z-50 transition-colors">
+                <button
+                    type="button"
+                    onClick={handleARStart}
+                    className="absolute bottom-4 right-4 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-full font-bold text-sm shadow-lg flex items-center gap-2 z-50 transition-colors active:scale-95"
+                >
                     <span className="material-icons-round text-lg">view_in_ar</span>
                     View in AR
                 </button>

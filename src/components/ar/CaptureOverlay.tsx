@@ -43,6 +43,7 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
   // Refs for hold-to-record logic
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHoldingRef = useRef(false);
+  const lastPointerUpTime = useRef(0);
   const recordingHandleRef = useRef<VideoRecordingHandle | null>(null);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -157,6 +158,7 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
         (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       } catch {}
       isHoldingRef.current = false;
+      lastPointerUpTime.current = Date.now();
 
       if (holdTimerRef.current) {
         clearTimeout(holdTimerRef.current);
@@ -172,6 +174,18 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
       }
     },
     [isRecording, stopRecording, handlePhotoCapture]
+  );
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      // If pointerup already handled this tap recently, ignore synthetic click
+      if (Date.now() - lastPointerUpTime.current < 500) return;
+      if (!isRecording && !isCapturing) {
+        handlePhotoCapture();
+      }
+    },
+    [isRecording, isCapturing, handlePhotoCapture]
   );
 
   const handlePointerCancel = useCallback(
@@ -251,6 +265,7 @@ export const CaptureOverlay: React.FC<CaptureOverlayProps> = ({
         {/* Shutter Button — tap for photo, hold for video */}
         <button
           id="ar-capture-button"
+          onClick={handleClick}
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
