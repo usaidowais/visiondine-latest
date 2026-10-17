@@ -47,6 +47,8 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
     const [loadingProgress, setLoadingProgress] = useState<number>(0);
     const [hasError, setHasError] = useState(false);
     const [cameraReady, setCameraReady] = useState(false);
+    const [cameraError, setCameraError] = useState(false);
+    const [modelReady, setModelReady] = useState(false);
     const [cameraInterrupted, setCameraInterrupted] = useState(false);
     const modelViewerRef = useRef<HTMLElement>(null);
     const backgroundVideoRef = useRef<HTMLVideoElement>(null);
@@ -70,15 +72,18 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 // grabs frames from this exact element (no duplicate getUserMedia)
                 setBackgroundVideoElement(backgroundVideoRef.current);
                 setCameraReady(true);
+                setCameraError(false);
                 setCameraInterrupted(false);
                 console.log('[ARExperience] Background camera feed running.');
             } else {
                 setCameraReady(false);
+                setCameraError(true);
                 setCameraInterrupted(true);
             }
         } catch (err) {
             console.warn('[ARExperience] Camera access denied or failed:', err);
             setCameraReady(false);
+            setCameraError(true);
             setCameraInterrupted(true);
         }
     }, []);
@@ -165,19 +170,19 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         (viewer as any).scale = s;
     }, [arScale]);
 
-    // ── Model load/error lifecycle & State Transition ────────────
+    // ── Model load/error lifecycle & Dual Readiness Transition ────
     useEffect(() => {
         const viewer = modelViewerRef.current;
         if (!viewer) return;
 
-        const advanceToReady = () => {
-            setArState((prev) => (prev === 'INITIALIZING' ? 'READY_TO_PLACE' : prev));
+        const handleModelReady = () => {
+            console.log('[ARExperience] 3D Model loaded and ready.');
+            setModelReady(true);
         };
 
         const checkLoaded = () => {
             if ((viewer as any).loaded || (viewer as any).modelIsVisible) {
-                console.log('[ARExperience] Model is loaded/visible. Advancing to READY_TO_PLACE');
-                advanceToReady();
+                handleModelReady();
                 return true;
             }
             return false;
@@ -187,8 +192,8 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
 
         // 1. Success Handler
         const handleLoad = () => {
-            console.log('[ARExperience] Model Loaded Successfully! Transitioning to READY_TO_PLACE');
-            advanceToReady();
+            console.log('[ARExperience] Model Loaded Successfully!');
+            handleModelReady();
         };
 
         // 2. Error Handler
@@ -204,7 +209,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             if (typeof progress === 'number') {
                 setLoadingProgress(progress);
                 if (progress >= 1) {
-                    advanceToReady();
+                    handleModelReady();
                 }
             }
         };
@@ -223,8 +228,9 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
 
         // 6. Reasonable safety fallback (3.5 seconds) so user is never stranded on INITIALIZING
         const safetyTimer = setTimeout(() => {
-            console.warn('[ARExperience] Safety timeout reached, transitioning to READY_TO_PLACE.');
-            advanceToReady();
+            console.warn('[ARExperience] Safety timeout reached, marking ready.');
+            setModelReady(true);
+            setArState((prev) => (prev === 'INITIALIZING' ? 'READY_TO_PLACE' : prev));
         }, 3500);
 
         return () => {
@@ -236,11 +242,19 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
         };
     }, []);
 
-    // ── Placement Action Handlers ────────────────────────────────
+    // Transition from INITIALIZING to READY_TO_PLACE once both camera and model are ready
+    useEffect(() => {
+        if (arState === 'INITIALIZING' && (cameraReady || cameraError) && modelReady) {
+            console.log('[ARExperience] Both camera and 3D model are ready! Advancing to READY_TO_PLACE.');
+            setArState('READY_TO_PLACE');
+        }
+    }, [arState, cameraReady, cameraError, modelReady]);
+
+    // ── Placement Action Handler ─────────────────────────────────
     const handlePlace = useCallback(() => {
         if (arState !== 'READY_TO_PLACE') return;
 
-        console.log('[ARExperience] User triggered Place in your space. Transitioning to PLACING.');
+        console.log('[ARExperience] User triggered Place It. Transitioning to PLACING.');
         setArState('PLACING');
 
         // Tactile Haptic Feedback
@@ -256,23 +270,12 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             viewer.autoRotate = false;
         }
 
-        // Brief settling animation before confirming PLACED
+        // Smooth settling animation before confirming PLACED
         setTimeout(() => {
             console.log('[ARExperience] Dish placed and anchored. Transitioning to PLACED.');
             setArState('PLACED');
-        }, 400);
+        }, 350);
     }, [arState]);
-
-    const handleReposition = useCallback(() => {
-        console.log('[ARExperience] User requested Reposition. Returning to READY_TO_PLACE.');
-        setArState('READY_TO_PLACE');
-
-        // Resume gentle auto-rotate for floating preview
-        const viewer = modelViewerRef.current as any;
-        if (viewer) {
-            viewer.autoRotate = true;
-        }
-    }, []);
 
     const handleCaptureSubState = useCallback((subState: 'CAPTURING_PHOTO' | 'RECORDING_VIDEO' | 'PLACED') => {
         setArState(subState);
@@ -355,39 +358,36 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 ✕
             </button>
 
-            {/* Dish Info Header Badge (Top Center, away from bottom camera controls) */}
-            <div
-                className="absolute top-4 left-1/2 -translate-x-1/2 z-[80] bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-2 max-w-[calc(100%-140px)] shadow-xl pointer-events-none"
-                style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
-            >
-                <span className="text-white text-xs font-bold truncate">{dishName}</span>
-                <span className="text-white/40 text-[10px]">·</span>
-                <span className="text-primary text-xs font-mono font-bold shrink-0">
-                    {typeof dishPrice === 'number' ? `PKR ${dishPrice}` : dishPrice}
-                </span>
-                {/* Status Pill */}
-                <span
-                    className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                        isPlaced
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                    }`}
+            {/* ─── STAGE D: Clean, elegant dish name (small, dynamic from data, no price, no restaurant card) ── */}
+            {isPlaced && (
+                <div
+                    className="absolute top-5 left-5 z-[80] pointer-events-none select-none max-w-[calc(100%-110px)]"
+                    style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}
                 >
-                    {isPlaced ? 'Placed in AR' : 'Preview'}
-                </span>
-            </div>
+                    <h2
+                        className="text-white text-sm md:text-base font-semibold tracking-wide drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] truncate"
+                        style={{ fontFamily: '"Inter", "Helvetica Neue", -apple-system, sans-serif' }}
+                    >
+                        {dishName}
+                    </h2>
+                </div>
+            )}
 
-            {/* ─── STAGE: INITIALIZING ────────────────────────────────
-                 Shows loading spinner while model GLB or camera streams */}
+            {/* ─── STAGE B: INITIALIZING ────────────────────────────────
+                 Minimal loading screen with honest status messages */}
             {isInitializing && !hasError && (
-                <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
-                    <div className="w-10 h-10 border-2 border-white/20 border-t-white rounded-full animate-spin mb-3"></div>
-                    <span className="text-white text-sm font-medium tracking-wide">
-                        {loadingProgress > 0 && loadingProgress < 1
-                            ? `Loading 3D Model (${Math.round(loadingProgress * 100)}%)...`
-                            : 'Loading 3D Model...'}
+                <div className="absolute inset-0 z-[65] flex flex-col items-center justify-center bg-black/70 backdrop-blur-md pointer-events-none px-6 text-center">
+                    <div className="w-12 h-12 border-3 border-white/20 border-t-white rounded-full animate-spin mb-4 shadow-lg" />
+                    <span className="text-white text-base font-semibold tracking-wide">
+                        Preparing your AR experience
                     </span>
-                    <span className="text-white/60 text-xs mt-1">Preparing AR experience</span>
+                    <span className="text-white/70 text-xs mt-1.5 font-medium">
+                        {!cameraReady && !cameraError
+                            ? 'Getting your camera ready...'
+                            : loadingProgress > 0 && loadingProgress < 1
+                            ? `Loading 3D Model (${Math.round(loadingProgress * 100)}%)...`
+                            : 'Preparing 3D model...'}
+                    </span>
                 </div>
             )}
 
@@ -432,17 +432,6 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 </div>
             )}
 
-            {/* ─── STAGE: READY_TO_PLACE (Floor Reticle Guide) ─────────
-                 Indicates the flat surface area where the dish will anchor */}
-            {isReadyToPlace && (
-                <div className="absolute inset-0 z-[15] pointer-events-none flex flex-col items-center justify-center">
-                    <div className="w-64 h-28 rounded-[100%] border-2 border-dashed border-white/70 bg-white/5 animate-pulse flex flex-col items-center justify-center transform translate-y-20 shadow-[0_0_30px_rgba(255,255,255,0.25)]">
-                        <div className="w-3 h-3 rounded-full bg-white/90 mb-1" />
-                        <span className="text-[10px] font-bold text-white/80 uppercase tracking-wider">Placement Target</span>
-                    </div>
-                </div>
-            )}
-
             {/* ─── Layer 1: Transparent Model-Viewer ──────────────────
                  The model-viewer renders the 3D dish over the camera feed.
                  In READY_TO_PLACE, it hovers slightly above ground (preview altitude).
@@ -450,7 +439,7 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
             <div
                 className={`w-full h-full transition-all duration-500 ease-out ${
                     isReadyToPlace
-                        ? 'transform -translate-y-6 scale-[0.96] opacity-85'
+                        ? 'transform -translate-y-6 scale-[0.96] opacity-90'
                         : isPlacing
                         ? 'transform -translate-y-2 scale-[0.98] opacity-95'
                         : 'transform translate-y-0 scale-100 opacity-100'
@@ -483,28 +472,28 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                 />
             </div>
 
-            {/* ─── STAGE: READY_TO_PLACE & PLACING Controls ─────────────
+            {/* ─── STAGE C: READY_TO_PLACE & PLACING Controls ───────────
                  Visible strictly before placement. The capture shutter is hidden. */}
             {(isReadyToPlace || isPlacing) && (
                 <div
-                    className="absolute bottom-16 left-0 right-0 z-[80] flex flex-col items-center pointer-events-none px-6"
+                    className="absolute bottom-12 left-0 right-0 z-[80] flex flex-col items-center pointer-events-none px-6"
                     style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 16px) + 0.5rem)' }}
                 >
-                    {/* Guidance Pill */}
+                    {/* Readable Instruction: "Place your camera on a flat surface" */}
                     {isReadyToPlace && (
-                        <div className="mb-3.5 bg-black/80 backdrop-blur-xl px-4 py-2 rounded-full border border-white/25 text-white text-xs font-medium flex items-center gap-2 shadow-2xl animate-pulse pointer-events-auto">
+                        <div className="mb-4 bg-black/75 backdrop-blur-md px-5 py-2.5 rounded-full border border-white/20 text-white text-xs md:text-sm font-medium flex items-center gap-2 shadow-2xl pointer-events-auto">
                             <span className="material-icons-round text-base text-primary">control_camera</span>
-                            <span>Aim camera at a flat surface &amp; tap to place</span>
+                            <span>Place your camera on a flat surface</span>
                         </div>
                     )}
 
-                    {/* Primary "Place in your space" Button */}
+                    {/* Single Prominent Button: "Place It" */}
                     <button
                         id="ar-place-button"
                         onClick={handlePlace}
                         disabled={isPlacing}
                         className={`
-                            pointer-events-auto w-full max-w-xs py-4 px-6 rounded-full font-extrabold text-base
+                            pointer-events-auto w-full max-w-xs py-4 px-8 rounded-full font-extrabold text-base tracking-wide
                             flex items-center justify-center gap-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.6)]
                             border-2 border-white/90 active:scale-95 transition-all
                             ${isPlacing
@@ -512,33 +501,31 @@ export const ARExperience: React.FC<ARExperienceProps> = ({
                                 : 'bg-white text-black hover:bg-gray-100 hover:shadow-[0_16px_40px_rgba(255,255,255,0.25)]'
                             }
                         `}
-                        aria-label="Place dish in your space"
+                        aria-label="Place It"
                     >
                         {isPlacing ? (
                             <>
                                 <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                                <span>Anchoring dish to surface...</span>
+                                <span>Placing...</span>
                             </>
                         ) : (
                             <>
                                 <span className="material-icons-round text-2xl text-black">view_in_ar</span>
-                                <span>Place in your space</span>
+                                <span>Place It</span>
                             </>
                         )}
                     </button>
                 </div>
             )}
 
-            {/* ─── STAGE: PLACED Controls (Capture Overlay) ────────────
-                 Visible strictly AFTER confirmed placement.
-                 Includes photo shutter, hold-for-video, and Reposition Dish option. */}
+            {/* ─── STAGE D: Capture Overlay (Shutter Button + Hold for Video) ────
+                 Visible strictly AFTER confirmed placement. Contains only shutter & recording badge. */}
             {isPlaced && (
                 <CaptureOverlay
                     modelViewerRef={modelViewerRef}
                     dishName={dishName}
                     restaurantName={restaurantName}
                     onStateChange={handleCaptureSubState}
-                    onReposition={handleReposition}
                 />
             )}
         </div>

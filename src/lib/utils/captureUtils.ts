@@ -18,7 +18,7 @@
 
 export interface CaptureOptions {
   dishName: string;
-  restaurantName: string;
+  restaurantName?: string;
   quality?: number; // 0–1, defaults to 0.95
 }
 
@@ -194,14 +194,60 @@ function getModelViewerCanvas(viewer: ModelViewerElement): HTMLCanvasElement | n
   return canvas;
 }
 
+// ─── Watermark Helper ───────────────────────────────────────────
+
+/**
+ * Draws the clean, elegant dish name watermark on a 2D canvas context.
+ * Shared between single photo capture and continuous video recording frames.
+ * Renders ONLY the clean dish name over a soft gradient for high contrast.
+ * Strictly excludes restaurant names, prices, badges, and separator lines.
+ */
+export function drawDishNameWatermark(
+  ctx: CanvasRenderingContext2D,
+  dishName: string,
+  width: number,
+  height: number
+): void {
+  const cleanName = dishName?.trim();
+  if (!cleanName) return;
+
+  // Elegant bottom gradient for text contrast without obstructing food
+  const gradientHeight = Math.max(90, Math.round(height * 0.08));
+  const gradientStartY = height - gradientHeight;
+  const gradient = ctx.createLinearGradient(0, gradientStartY, 0, height);
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.35)');
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, gradientStartY, width, gradientHeight);
+
+  // Clean, elegant dish name
+  const padding = Math.max(24, Math.round(width * 0.05));
+  const fontSize = Math.max(16, Math.min(28, Math.round(width * 0.038)));
+  const baselineY = height - Math.round(gradientHeight * 0.4);
+
+  ctx.save();
+  ctx.font = `600 ${fontSize}px "Inter", "Helvetica Neue", -apple-system, sans-serif`;
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(cleanName, padding, baselineY);
+  ctx.restore();
+}
+
 // ─── Composite Frame Capture ────────────────────────────────────
 
 /**
- * Creates a composite frame: camera feed + model-viewer overlay.
+ * Creates a composite frame: camera feed + model-viewer overlay + clean dish name.
  * If camera feed is unavailable, falls back to model-only capture.
  */
 async function captureCompositeFrame(
   viewer: ModelViewerElement,
+  dishName: string,
   quality: number
 ): Promise<Blob | null> {
   const mvCanvas = getModelViewerCanvas(viewer);
@@ -251,6 +297,9 @@ async function captureCompositeFrame(
     }
   }
 
+  // Layer 3: Clean Dish Name Watermark
+  drawDishNameWatermark(ctx, dishName, width, height);
+
   // Export the composite
   return new Promise<Blob | null>((resolve) => {
     compositeCanvas.toBlob(
@@ -269,8 +318,8 @@ async function captureCompositeFrame(
 // ─── Core Photo Capture ─────────────────────────────────────────
 
 /**
- * Captures a composite AR frame (camera + model), applies branded
- * watermark, and triggers download.
+ * Captures a composite AR frame (camera + model + clean dish name)
+ * and triggers download or native mobile share.
  */
 export async function captureARRender(
   modelViewerEl: HTMLElement | null,
@@ -281,28 +330,21 @@ export async function captureARRender(
     return;
   }
 
-  const { dishName, restaurantName, quality = 0.95 } = options;
+  const { dishName, restaurantName = '', quality = 0.95 } = options;
 
   try {
-    // Step 1: Composite capture (camera + model)
-    const rawBlob = await captureCompositeFrame(modelViewerEl as ModelViewerElement, quality);
-    if (!rawBlob) {
+    // Composite capture (camera + model + dish name)
+    const compositeBlob = await captureCompositeFrame(modelViewerEl as ModelViewerElement, dishName, quality);
+    if (!compositeBlob) {
       console.error('[CaptureUtils] Failed to capture composite frame.');
       return;
     }
 
-    // Step 2: Watermark
-    const watermarkedBlob = await compositeWatermark(rawBlob, dishName, restaurantName, quality);
-    if (!watermarkedBlob) {
-      console.error('[CaptureUtils] Failed to composite watermark.');
-      return;
-    }
-
-    // Step 3: Download or Share (Web Share API with Instagram Story / Photo support)
+    // Download or Share (Web Share API with Instagram Story / Photo support)
     const filename = `${sanitizeFilename(dishName)}_VisionDine_Capture.png`;
-    await triggerDownload(watermarkedBlob, filename, {
-      title: `${dishName} - ${restaurantName}`,
-      text: `See ${dishName} at ${restaurantName} on VisionDine AR!`,
+    await triggerDownload(compositeBlob, filename, {
+      title: dishName,
+      text: `See ${dishName} in AR on VisionDine!`,
     });
   } catch (error) {
     console.error('[CaptureUtils] Capture failed:', error);
@@ -366,6 +408,9 @@ export function startVideoRecording(
       ctx.drawImage(mvCanvas, 0, 0, width, height);
     }
 
+    // Layer 3: Clean Dish Name Watermark
+    drawDishNameWatermark(ctx, options.dishName, width, height);
+
     animFrameId = requestAnimationFrame(renderFrame);
   };
 
@@ -411,8 +456,8 @@ export function startVideoRecording(
     const blob = new Blob(chunks, { type: mimeType });
     const filename = `VisionDine_${sanitizeFilename(options.dishName)}_Video.${ext}`;
     triggerDownload(blob, filename, {
-      title: `${options.dishName} - ${options.restaurantName}`,
-      text: `See ${options.dishName} at ${options.restaurantName} on VisionDine AR!`,
+      title: options.dishName,
+      text: `See ${options.dishName} in AR on VisionDine!`,
     });
 
     // Cleanup
@@ -470,13 +515,13 @@ export function releaseCamera(): void {
   console.log('[CaptureUtils] Camera resources released.');
 }
 
-// ─── Watermark Compositing ──────────────────────────────────────
+// ─── Watermark Compositing (Fallback / Utility) ─────────────────
 
-async function compositeWatermark(
+export async function compositeWatermark(
   sourceBlob: Blob,
   dishName: string,
-  restaurantName: string,
-  quality: number
+  restaurantName?: string,
+  quality: number = 0.95
 ): Promise<Blob | null> {
   const img = await loadImage(sourceBlob);
 
@@ -490,48 +535,8 @@ async function compositeWatermark(
   // Draw the captured frame
   ctx.drawImage(img, 0, 0);
 
-  // Dark gradient at bottom
-  const gradientStartY = canvas.height - GRADIENT_HEIGHT;
-  const gradient = ctx.createLinearGradient(0, gradientStartY, 0, canvas.height);
-  gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  gradient.addColorStop(0.4, 'rgba(0, 0, 0, 0.3)');
-  gradient.addColorStop(1, 'rgba(0, 0, 0, 0.75)');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, gradientStartY, canvas.width, GRADIENT_HEIGHT);
-
-  // Dish name (left)
-  const padding = Math.max(20, canvas.width * 0.04);
-  const dishFontSize = Math.max(16, Math.min(24, canvas.width * 0.04));
-  const restaurantFontSize = Math.max(12, Math.min(18, canvas.width * 0.03));
-  const baselineY = canvas.height - (WATERMARK_BAR_HEIGHT / 2) + (dishFontSize / 3);
-
-  ctx.font = `bold ${dishFontSize}px ${FONT_SERIF}`;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 1;
-  ctx.fillText(dishName, padding, baselineY);
-
-  // Restaurant name (right)
-  ctx.font = `500 ${restaurantFontSize}px ${FONT_SANS}`;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-  ctx.textAlign = 'right';
-  ctx.fillText(restaurantName, canvas.width - padding, baselineY);
-
-  // Reset shadow
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-
-  // Thin separator line
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(padding, canvas.height - WATERMARK_BAR_HEIGHT);
-  ctx.lineTo(canvas.width - padding, canvas.height - WATERMARK_BAR_HEIGHT);
-  ctx.stroke();
+  // Draw clean dish name watermark
+  drawDishNameWatermark(ctx, dishName, canvas.width, canvas.height);
 
   // Export
   return new Promise<Blob | null>((resolve) => {
