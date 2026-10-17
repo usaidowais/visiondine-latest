@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { Dish, Restaurant, UIPreset } from '@/lib/types';
 import { supabaseService, supabase } from '@/lib/services/supabaseService';
-import { ARExperience } from '@/components/ar/ARExperience';
+import { ARExperience, ARExperienceHandle } from '@/components/ar/ARExperience';
 import { computeActiveTheme } from '@/lib/utils/themeManager';
 import { Button } from '@/components/ui/Button';
 
@@ -17,6 +17,7 @@ export default function SingleDishPage() {
     const [dish, setDish] = useState<Dish | null>(null);
     const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
     const [showAR, setShowAR] = useState(false);
+    const arExperienceRef = useRef<ARExperienceHandle>(null);
 
     useEffect(() => {
         const loadDishData = async () => {
@@ -130,7 +131,10 @@ export default function SingleDishPage() {
                     <Button
                         className="w-full py-6 text-lg rounded-2xl shadow-xl flex items-center justify-center gap-2 transition-transform active:scale-95"
                         style={{ backgroundColor: effectivePreset.primaryColor || '#000', color: '#fff' }}
-                        onClick={() => setShowAR(true)}
+                        onClick={() => {
+                            setShowAR(true);
+                            arExperienceRef.current?.startAR();
+                        }}
                     >
                         <span className="material-icons-round text-2xl">view_in_ar</span>
                         View in AR
@@ -149,9 +153,20 @@ export default function SingleDishPage() {
             </div>
 
             {/* AR Experience Overlay */}
-            {showAR && (
-                <div className="fixed inset-0 z-[100] bg-black">
+            {dish.glb_url && (
+                <div
+                    className="fixed inset-0 bg-black transition-opacity duration-200"
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        zIndex: showAR ? 100 : -1,
+                        opacity: showAR ? 1 : 0,
+                        pointerEvents: showAR ? 'auto' : 'none',
+                        visibility: showAR ? 'visible' : 'hidden',
+                    }}
+                >
                     <ARExperience
+                        ref={arExperienceRef}
                         src={dish.glb_url || ''}
                         iosSrc={dish.usdz_url}
                         alt={dish.name}
@@ -160,6 +175,7 @@ export default function SingleDishPage() {
                         secondaryColor={effectivePreset.secondaryColor}
                         arScale={dish.ar_scale || 1.0}
                         restaurantName={restaurant.name}
+                        isOpen={showAR}
                         onClose={() => setShowAR(false)}
                     />
                 </div>

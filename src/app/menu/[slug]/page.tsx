@@ -251,6 +251,7 @@ export default function PublicMenuPage() {
                     secondaryColor={effectivePreset.secondaryColor}
                     arScale={arDish.ar_scale || 1.0}
                     restaurantName={restaurant.name}
+                    isOpen={!!arDish}
                     onClose={() => setArDish(null)}
                 />
             )}
